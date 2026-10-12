@@ -4,18 +4,17 @@ import Link from "next/link";
 import useSWR from "swr";
 import { errorText } from "@/lib/api";
 import { formatNumber } from "@/lib/format";
-import type { BotStatus, Group, Overview } from "@/lib/types";
+import type { BotStatus, GroupSummary, Overview } from "@/lib/types";
 import { BotStatusCard } from "./bot-status-card";
 import { Card, CardHeader, EmptyState, PageHeader, Skeleton, StatTile } from "./ui";
 import { GroupLink, ViolationItem } from "./violation-item";
 import { ViolationsChart } from "./violations-chart";
 
 function Tiles() {
-  const { data: groups } = useSWR<Group[]>("/groups");
+  const { data: groups } = useSWR<GroupSummary>("/groups/summary");
   const { data: overview } = useSWR<Overview>("/overview");
   const { data: status } = useSWR<BotStatus>("/status");
   const pending = <Skeleton className="h-9 w-16" />;
-  const active = groups?.filter((group) => group.botEnabled) ?? [];
   const today = overview?.series.at(-1);
   const yesterday = overview?.series.at(-2);
   const todayTotal = today === undefined ? 0 : today.link + today.badWord;
@@ -26,13 +25,13 @@ function Tiles() {
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       <StatTile
         label="Nhóm"
-        value={groups ? formatNumber(groups.length) : pending}
-        hint={groups ? `Bot là QTV ở ${formatNumber(groups.filter((group) => group.botIsAdmin).length)} nhóm` : undefined}
+        value={groups ? formatNumber(groups.total) : pending}
+        hint={groups ? `Bot là QTV ở ${formatNumber(groups.botAdmin)} nhóm` : undefined}
       />
       <StatTile
         label="Nhóm đang bật bot"
-        value={groups ? formatNumber(active.length) : pending}
-        hint={groups ? `${formatNumber(active.filter((group) => group.botIsAdmin && ((group.linkGuardEnabled && group.kickRules.link.enabled) || (group.badWordFilterEnabled && group.kickRules.badWord.enabled))).length)} nhóm có tính năng đang kick` : undefined}
+        value={groups ? formatNumber(groups.enabled) : pending}
+        hint={groups ? `${formatNumber(groups.kicking)} nhóm có tính năng đang kick` : undefined}
       />
       <StatTile
         label="Vi phạm hôm nay"

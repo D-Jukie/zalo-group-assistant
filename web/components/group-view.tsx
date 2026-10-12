@@ -353,7 +353,7 @@ export function GroupView({ groupId }: { groupId: string }) {
 
   function applyChange(updated: Group) {
     void mutate(updated, { revalidate: false });
-    void mutateGlobal("/groups");
+    void mutateGlobal((key) => typeof key === "string" && (key.startsWith("/groups?") || key === "/groups/summary"));
   }
 
   const featureSummary = !group.botEnabled ? "Bot đang tắt" : [

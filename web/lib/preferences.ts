@@ -75,6 +75,14 @@ export function usePreferences(): Preferences {
   return useSyncExternalStore(subscribe, getSnapshot, () => defaults);
 }
 
+const noSubscription = () => () => undefined;
+
+// False until the saved preferences can be read. Components whose requests depend on a preference
+// wait for this, instead of asking once with the defaults and again with the real values.
+export function usePreferencesReady(): boolean {
+  return useSyncExternalStore(noSubscription, () => true, () => false);
+}
+
 export function applyTheme(theme: Theme): void {
   if (theme === "system") delete document.documentElement.dataset.theme;
   else document.documentElement.dataset.theme = theme;

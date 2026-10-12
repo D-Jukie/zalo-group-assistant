@@ -22,6 +22,20 @@ export type Group = {
   updatedAt: number;
 };
 
+// One page of the groups table, already searched and filtered by the bot.
+export type GroupPage = { items: Group[]; total: number; page: number; pageSize: number };
+
+// Counts across every group, for pages that do not need the list itself.
+export type GroupSummary = {
+  total: number;
+  botAdmin: number;
+  enabled: number;
+  // The next three only count groups where the bot is switched on.
+  linkGuard: number;
+  badWordFilter: number;
+  kicking: number;
+};
+
 export type GroupToggle = "bot" | "links" | "bad-words";
 
 export type BotStatus = {

@@ -3,13 +3,15 @@
 import { RefreshCw, Search } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import useSWR from "swr";
 import { errorText, send } from "@/lib/api";
 import { cn, formatDateTime, formatNumber } from "@/lib/format";
-import { usePreferences } from "@/lib/preferences";
-import type { Group } from "@/lib/types";
+import { usePreferences, usePreferencesReady } from "@/lib/preferences";
+import type { Group, GroupPage } from "@/lib/types";
 import { Badge, Button, Card, CompactSwitch, EmptyState, ErrorNote, Input, PageHeader, Skeleton } from "./ui";
+
+const searchDebounceMs = 250;
 
 // Every body row has the same height, whether it holds a group or pads out a short page.
 const rowClass = "h-[3.25rem] border-b border-border last:border-0";
@@ -20,15 +22,6 @@ const filters = [
   { value: "admin", label: "Bot là QTV" },
   { value: "member", label: "Bot là thành viên" },
 ] as const;
-
-type Filter = (typeof filters)[number]["value"];
-
-function matchesFilter(group: Group, filter: Filter): boolean {
-  if (filter === "enabled") return group.botEnabled;
-  if (filter === "admin") return group.botIsAdmin;
-  if (filter === "member") return !group.botIsAdmin;
-  return true;
-}
 
 function RuleBadges({ group }: { group: Group }) {
   if (!group.botEnabled) return <span className="text-sm text-subtle">—</span>;
@@ -43,44 +36,85 @@ function RuleBadges({ group }: { group: Group }) {
 }
 
 // The search text, filter and page live in the URL, so a view can be bookmarked, shared and restored with Back.
+// The bot does the searching, filtering and paging; this page only ever holds the rows it shows.
 export function GroupsView() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [, startTransition] = useTransition();
   const { pageSize } = usePreferences();
+  const preferencesReady = usePreferencesReady();
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string>();
-  const { data: groups, error, mutate } = useSWR<Group[]>("/groups");
 
   const query = searchParams.get("q") ?? "";
   const filter = filters.find((item) => item.value === searchParams.get("filter"))?.value ?? "all";
   const requestedPage = Number(searchParams.get("page") ?? "1");
 
+  const request = new URLSearchParams({ page: String(Number.isInteger(requestedPage) && requestedPage >= 1 ? requestedPage : 1), pageSize: String(pageSize) });
+  if (query.trim() !== "") request.set("q", query.trim());
+  if (filter !== "all") request.set("filter", filter);
+  // The previous page stays on screen while the next one loads, so the table never collapses between requests.
+  const { data, error, mutate } = useSWR<GroupPage>(preferencesReady ? `/groups?${request.toString()}` : null, { keepPreviousData: true });
+
+  // What is typed shows at once; the URL (and with it the request to the bot) follows once typing pauses.
+  const [searchText, setSearchText] = useState(query);
+  const appliedQuery = useRef(query);
+  useEffect(() => {
+    // The URL changed from outside this box (Back, a link): show what is actually being searched.
+    if (query !== appliedQuery.current) {
+      appliedQuery.current = query;
+      setSearchText(query);
+    }
+  }, [query]);
+  // Changes the URL. Text still waiting out the debounce goes along with whatever else changes, so a
+  // filter or pager click during the wait cannot be undone by the pending search, or the other way round.
   function setParams(changes: Record<string, string | undefined>) {
     const next = new URLSearchParams(searchParams);
+    if (searchText !== query) {
+      appliedQuery.current = searchText;
+      next.set("q", searchText);
+      next.delete("page");
+    }
     for (const [key, value] of Object.entries(changes)) {
       if (value === undefined || value === "") next.delete(key);
       else next.set(key, value);
     }
+    if (next.get("q") === "") next.delete("q");
     const suffix = next.toString();
     startTransition(() => router.replace(suffix ? `${pathname}?${suffix}` : pathname, { scroll: false }));
   }
+
+  // The timer always calls the newest setParams, which sees the newest URL and text.
+  const latestSetParams = useRef(setParams);
+  useEffect(() => {
+    latestSetParams.current = setParams;
+  });
+  useEffect(() => {
+    if (searchText === appliedQuery.current) return;
+    const timer = setTimeout(() => {
+      // Another change may already have carried this text into the URL.
+      if (searchText !== appliedQuery.current) latestSetParams.current({});
+    }, searchDebounceMs);
+    return () => clearTimeout(timer);
+  }, [searchText]);
 
   // Switches the bot on or off for one group right from the list. The row updates at once and
   // falls back to the saved state if the bot refuses the change.
   async function setBotEnabled(group: Group, enabled: boolean) {
     setSyncError(undefined);
+    const withBot = (current: GroupPage): GroupPage => ({ ...current, items: current.items.map((item) => item.groupId === group.groupId ? { ...item, botEnabled: enabled } : item) });
     try {
       await mutate(
         async (current) => {
           await send("PATCH", `/groups/${encodeURIComponent(group.groupId)}/bot`, { enabled });
-          return current?.map((item) => item.groupId === group.groupId ? { ...item, botEnabled: enabled } : item);
+          return current === undefined ? current : withBot(current);
         },
         {
-          optimisticData: (current) => (current ?? []).map((item) => item.groupId === group.groupId ? { ...item, botEnabled: enabled } : item),
+          optimisticData: (current) => current === undefined ? { items: [], total: 0, page: 1, pageSize } : withBot(current),
           rollbackOnError: true,
-          revalidate: false,
+          // The saved change can move the group out of a filtered view and alter the total.
+          revalidate: true,
         },
       );
     } catch (exception) {
@@ -92,7 +126,8 @@ export function GroupsView() {
     setSyncError(undefined);
     setSyncing(true);
     try {
-      await mutate(send<Group[]>("POST", "/groups/sync"), { revalidate: false });
+      await send("POST", "/groups/sync");
+      await mutate();
     } catch (exception) {
       setSyncError(errorText(exception));
     } finally {
@@ -100,11 +135,11 @@ export function GroupsView() {
     }
   }
 
-  const needle = query.trim().toLowerCase();
-  const visible = (groups ?? []).filter((group) => matchesFilter(group, filter) && group.name.toLowerCase().includes(needle));
-  const pageCount = Math.max(1, Math.ceil(visible.length / pageSize));
-  const page = Number.isInteger(requestedPage) && requestedPage >= 1 ? Math.min(requestedPage, pageCount) : 1;
-  const rows = visible.slice((page - 1) * pageSize, page * pageSize);
+  const rows = data?.items ?? [];
+  const total = data?.total ?? 0;
+  const page = data?.page ?? 1;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const unfiltered = query.trim() === "" && filter === "all";
 
   return (
     <>
@@ -122,15 +157,16 @@ export function GroupsView() {
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <div className="relative min-w-56 flex-1">
           <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-subtle" />
-          <label htmlFor="group-search" className="sr-only">Tìm nhóm theo tên</label>
+          <label htmlFor="group-search" className="sr-only">Tìm nhóm theo tên hoặc ID</label>
           <Input
             id="group-search"
             name="q"
             type="search"
             autoComplete="off"
-            placeholder="Tìm nhóm theo tên…"
-            defaultValue={query}
-            onChange={(event) => setParams({ q: event.target.value, page: undefined })}
+            placeholder="Tìm nhóm theo tên hoặc ID…"
+            maxLength={100}
+            value={searchText}
+            onChange={(event) => setSearchText(event.target.value)}
             className="pl-9"
           />
         </div>
@@ -153,14 +189,14 @@ export function GroupsView() {
       </div>
 
       <Card>
-        {groups === undefined ? (
+        {data === undefined ? (
           <div className="space-y-3 p-5">
             {error ? <p className="text-sm text-danger">{errorText(error)}</p> : Array.from({ length: 6 }, (_item, index) => <Skeleton key={index} className="h-10 w-full" />)}
           </div>
         ) : rows.length === 0 ? (
           <EmptyState
-            title={groups.length === 0 ? "Chưa có nhóm nào" : "Không có nhóm nào khớp"}
-            description={groups.length === 0 ? "Bấm “Đồng bộ từ Zalo” để lấy danh sách nhóm của tài khoản bot." : "Thử từ khóa khác hoặc bỏ bộ lọc."}
+            title={unfiltered ? "Chưa có nhóm nào" : "Không có nhóm nào khớp"}
+            description={unfiltered ? "Bấm “Đồng bộ từ Zalo” để lấy danh sách nhóm của tài khoản bot." : "Thử từ khóa khác hoặc bỏ bộ lọc."}
           />
         ) : (
           <div className="overflow-x-auto">
@@ -211,10 +247,10 @@ export function GroupsView() {
             </table>
           </div>
         )}
-        {groups !== undefined && visible.length > 0 ? (
+        {data !== undefined && total > 0 ? (
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-5 py-3 text-sm text-muted">
             <p className="tabular-nums">
-              {formatNumber((page - 1) * pageSize + 1)}–{formatNumber(Math.min(page * pageSize, visible.length))} trong {formatNumber(visible.length)} nhóm
+              {formatNumber((page - 1) * pageSize + 1)}–{formatNumber(Math.min(page * pageSize, total))} trong {formatNumber(total)} nhóm
             </p>
             <div className="flex gap-2">
               <Button disabled={page <= 1} onClick={() => setParams({ page: page <= 2 ? undefined : String(page - 1) })}>Trang trước</Button>

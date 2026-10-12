@@ -5,6 +5,7 @@ import type { BlockedLinks } from "../moderation/blocked-links.js";
 import type { Store } from "../storage/store.js";
 import { violationRules, type GroupSetting, type ViolationRule } from "../types.js";
 import { isRecord } from "../utils.js";
+import { groupFilters, searchGroups, summarizeGroups, type GroupFilter } from "./group-search.js";
 import type { LoginCodeService } from "./login-code.js";
 import { authMiddleware, endSession, isAuthenticated, startSession } from "./session.js";
 
@@ -19,6 +20,9 @@ const maxKickWindowSeconds = 7 * 24 * 60 * 60;
 const overviewDays = 14;
 const recentViolationLimit = 20;
 const violationPageSize = 30;
+const defaultGroupPageSize = 25;
+const maxGroupPageSize = 100;
+const maxSearchLength = 100;
 
 function isIntegerBetween(value: unknown, min: number, max: number): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= min && value <= max;
@@ -146,11 +150,24 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
     }));
   });
 
-  app.get("/api/groups", async (_request, response) => response.json(await bot.listGroups()));
+  // One page of groups. Searching and filtering happen here, so every page of the table reflects the whole list.
+  app.get("/api/groups", async (request, response) => {
+    const text = typeof request.query.q === "string" ? request.query.q.slice(0, maxSearchLength) : "";
+    const filter = groupFilters.find((item: GroupFilter) => item === request.query.filter) ?? "all";
+    const page = Number(request.query.page);
+    const pageSize = Number(request.query.pageSize);
+    response.json(searchGroups(await bot.listGroups(), {
+      text,
+      filter,
+      page: Number.isInteger(page) && page >= 1 ? page : 1,
+      pageSize: isIntegerBetween(pageSize, 1, maxGroupPageSize) ? pageSize : defaultGroupPageSize,
+    }));
+  });
+  app.get("/api/groups/summary", async (_request, response) => response.json(summarizeGroups(await bot.listGroups())));
   app.post("/api/groups/sync", async (_request, response) => {
     try {
       await bot.syncAllGroups();
-      response.json(await bot.listGroups());
+      response.json({ ok: true });
     } catch (error: unknown) {
       response.status(502).json({ error: errorMessage(error) });
     }

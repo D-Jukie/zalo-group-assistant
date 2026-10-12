@@ -5,7 +5,7 @@ import { useState, type FormEvent } from "react";
 import useSWR from "swr";
 import { errorText, send } from "@/lib/api";
 import { cn } from "@/lib/format";
-import type { Group } from "@/lib/types";
+import type { GroupSummary } from "@/lib/types";
 import { ListManager } from "./list-manager";
 import { Badge, Button, Card, CardHeader, ErrorNote, Input, PageHeader } from "./ui";
 
@@ -17,10 +17,9 @@ const tabs = [
 type Tab = (typeof tabs)[number]["value"];
 
 // How many groups currently use a feature. Switching it on or off for a group is done on that group's page.
-function useGroupCount(isOn: (group: Group) => boolean): string {
-  const { data: groups } = useSWR<Group[]>("/groups");
-  if (groups === undefined) return "";
-  return ` Đang bật ở ${groups.filter((group) => group.botEnabled && isOn(group)).length} nhóm.`;
+function useGroupCount(feature: "linkGuard" | "badWordFilter"): string {
+  const { data: summary } = useSWR<GroupSummary>("/groups/summary");
+  return summary === undefined ? "" : ` Đang bật ở ${summary[feature]} nhóm.`;
 }
 
 function SentenceCheck() {
@@ -65,7 +64,7 @@ function SentenceCheck() {
 }
 
 function LinksTab() {
-  const usage = useGroupCount((group) => group.linkGuardEnabled);
+  const usage = useGroupCount("linkGuard");
   return (
     <div className="grid items-start gap-4 lg:grid-cols-2">
       <ListManager
@@ -93,7 +92,7 @@ function LinksTab() {
 }
 
 function WordsTab() {
-  const usage = useGroupCount((group) => group.badWordFilterEnabled);
+  const usage = useGroupCount("badWordFilter");
   return (
     <div className="grid items-start gap-4 lg:grid-cols-2">
       <ListManager
