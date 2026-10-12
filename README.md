@@ -45,6 +45,10 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 
 Phiên Zalo của bot (cookie, IMEI) được mã hóa AES-256-GCM bằng khóa này rồi lưu trong MongoDB (collection `secrets`), nên các lần chạy sau không cần quét QR nếu phiên còn hạn. Khóa chỉ nằm trong `.env`, không nằm trong MongoDB hay mã nguồn. Nếu mất hoặc đổi khóa, bot không đọc được phiên cũ và sẽ yêu cầu quét QR lại.
 
+## Thông tin bot
+
+Đầu trang `/admin` có thẻ thông tin bot: tên, ảnh đại diện và ID của tài khoản Zalo đang chạy bot, trạng thái kết nối tới Zalo (đang kết nối hay mất kết nối, từ lúc nào), thời điểm bot khởi động, thời gian đã chạy, và số tin nhắn nhóm đã nhận cùng số tin vi phạm đã xử lý kể từ lúc khởi động. Các số này về 0 mỗi khi bot khởi động lại.
+
 ## Đăng nhập quản trị
 
 Trang quản trị không dùng tài khoản/mật khẩu. Bấm `Gửi mã đăng nhập`, bot sẽ nhắn một mã 8 chữ số tới tài khoản Zalo của người quản trị, rồi nhập mã đó để đăng nhập. Zalo không cho một tài khoản tự nhắn cho chính nó, nên tài khoản nhận mã phải khác tài khoản bot.

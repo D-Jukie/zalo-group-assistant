@@ -35,6 +35,9 @@ table{border-collapse:collapse;width:100%}
 th,td{text-align:left;padding:.45rem .6rem;border-bottom:1px solid #eaecf0;white-space:nowrap}
 td.number,th.number{text-align:right}
 .message-text{white-space:pre-wrap;word-break:break-word}
+#bot{display:flex;gap:1rem;align-items:center}
+#bot img{width:64px;height:64px;border-radius:50%;object-fit:cover}
+#bot h2,#bot p{margin:.2rem 0}
 [hidden]{display:none}
 </style>
 </head>
@@ -42,6 +45,17 @@ td.number,th.number{text-align:right}
 <h1>Zalo group assistant</h1>
 <p id="status" class="muted">Đang tải...</p>
 <p><button id="refresh">Làm mới</button><button id="logout" class="secondary">Đăng xuất</button></p>
+
+<section id="bot" class="card">
+<img id="bot-avatar" alt="" hidden>
+<div>
+<h2 id="bot-name">Bot</h2>
+<p class="muted">ID: <span id="bot-id"></span></p>
+<p id="bot-connection"></p>
+<p>Hoạt động từ <span id="bot-started"></span> · đã chạy <strong id="bot-uptime"></strong></p>
+<p class="muted">Từ lúc khởi động: đã nhận <span id="bot-messages"></span> tin nhắn nhóm, xử lý <span id="bot-violations"></span> tin vi phạm.</p>
+</div>
+</section>
 
 <section class="card">
 <h2>Link bị chặn thêm</h2>
@@ -138,6 +152,40 @@ $('#check-form').addEventListener('submit', async (event) => {
   } catch (exception) { $('#check-result').textContent = exception.message; }
 });
 
+// Bot status
+let botStatus;
+let botStatusAt = 0;
+function formatDuration(totalSeconds) {
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor(totalSeconds % 86400 / 3600);
+  const minutes = Math.floor(totalSeconds % 3600 / 60);
+  const seconds = Math.floor(totalSeconds % 60);
+  if (days > 0) return days + ' ngày ' + hours + ' giờ ' + minutes + ' phút';
+  if (hours > 0) return hours + ' giờ ' + minutes + ' phút';
+  if (minutes > 0) return minutes + ' phút ' + seconds + ' giây';
+  return seconds + ' giây';
+}
+// The uptime keeps counting between refreshes from the value the server last reported.
+function showUptime() {
+  if (botStatus) $('#bot-uptime').textContent = formatDuration(botStatus.uptimeSeconds + (Date.now() - botStatusAt) / 1000);
+}
+async function loadStatus() {
+  botStatus = await request('/api/status');
+  botStatusAt = Date.now();
+  $('#bot-name').textContent = botStatus.displayName || 'Bot';
+  $('#bot-id').textContent = botStatus.userId;
+  $('#bot-avatar').hidden = !botStatus.avatar;
+  if (botStatus.avatar) $('#bot-avatar').src = botStatus.avatar;
+  const since = new Date(botStatus.connectionChangedAt).toLocaleString('vi-VN');
+  $('#bot-connection').className = botStatus.connected ? 'ok' : 'error';
+  $('#bot-connection').textContent = botStatus.connected ? 'Đang kết nối Zalo (từ ' + since + ')' : 'Mất kết nối Zalo (từ ' + since + ')';
+  $('#bot-started').textContent = new Date(botStatus.startedAt).toLocaleString('vi-VN');
+  $('#bot-messages').textContent = botStatus.groupMessagesSeen;
+  $('#bot-violations').textContent = botStatus.violationsHandled;
+  showUptime();
+}
+setInterval(showUptime, 1000);
+
 // Groups
 const windowUnits = [['86400', 'ngày'], ['3600', 'giờ'], ['60', 'phút'], ['1', 'giây']];
 // One line of the form "<rule>: kick khi đủ N lần trong T <đơn vị>", using the largest unit that divides the window evenly.
@@ -202,7 +250,7 @@ $('#groups').addEventListener('click', (event) => {
   if (target.classList.contains('stats-button')) openStats(target.dataset.id, target.dataset.name);
 });
 $('#group-search').addEventListener('input', renderGroups);
-$('#refresh').onclick = () => loadGroups().catch(showLoadError);
+$('#refresh').onclick = () => { loadStatus().catch(showLoadError); loadGroups().catch(showLoadError); };
 $('#logout').onclick = async () => { await fetch('/logout', { method: 'POST' }); window.location.href = '/login'; };
 
 // Statistics
@@ -262,8 +310,9 @@ $('#stats-table').addEventListener('click', (event) => {
   if (userId !== undefined && confirm('Xóa thống kê của thành viên này?')) clearStats({ userId });
 });
 
+loadStatus().catch(showLoadError);
 loadGroups().catch(showLoadError);
-setInterval(() => loadGroups().catch(() => undefined), 30000);
+setInterval(() => { loadStatus().catch(() => undefined); loadGroups().catch(() => undefined); }, 30000);
 </script>
 </body>
 </html>`;

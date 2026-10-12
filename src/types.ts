@@ -49,6 +49,22 @@ export type AdminGroupView = Readonly<{
   updatedAt: number;
 }>;
 
+// What the admin page shows about the running bot.
+export type BotStatus = Readonly<{
+  userId: string;
+  // Empty when Zalo did not return the profile.
+  displayName: string;
+  avatar: string;
+  startedAt: number;
+  uptimeSeconds: number;
+  // Whether the message listener is connected to Zalo right now, and since when.
+  connected: boolean;
+  connectionChangedAt: number;
+  // Since the bot started.
+  groupMessagesSeen: number;
+  violationsHandled: number;
+}>;
+
 // The per-group on/off switches.
 export type GroupSetting = "botEnabled" | "badWordFilterEnabled" | "kickEnabled";
 

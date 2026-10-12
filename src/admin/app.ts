@@ -76,7 +76,7 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
     response.setHeader("Cache-Control", "no-store, max-age=0");
     next();
   });
-  app.get("/api/status", (_request, response) => response.json({ connected: true, ownId: bot.ownId }));
+  app.get("/api/status", (_request, response) => response.json(bot.status()));
   app.get("/api/groups", async (_request, response) => {
     try {
       response.json(await bot.listGroups());

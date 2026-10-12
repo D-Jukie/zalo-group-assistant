@@ -1,7 +1,7 @@
 import { ThreadType, type API, type GroupEvent, type Message } from "zca-js";
 import { writeLog } from "../logger.js";
 import type { Store } from "../storage/store.js";
-import { defaultKickRules, type AdminGroupView, type LiveGroupInfo } from "../types.js";
+import { defaultKickRules, type AdminGroupView, type BotStatus, type LiveGroupInfo } from "../types.js";
 import { isRecord, now } from "../utils.js";
 import { Enforcer } from "./enforcer.js";
 import type { BotFeature } from "./feature.js";
@@ -11,6 +11,11 @@ export class SimpleBot {
   private readonly groupCache = new Map<string, Readonly<{ info: LiveGroupInfo; expiresAt: number }>>();
   private groupListInFlight: Promise<AdminGroupView[]> | undefined;
   private readonly recentMessages = new RecentMessages();
+  private readonly startedAt = now();
+  private profile: Readonly<{ displayName: string; avatar: string }> = { displayName: "", avatar: "" };
+  private connected = false;
+  private connectionChangedAt = now();
+  private groupMessagesSeen = 0;
   private readonly enforcer: Enforcer;
 
   public constructor(
@@ -23,6 +28,7 @@ export class SimpleBot {
   }
 
   public async start(): Promise<void> {
+    await this.loadProfile();
     await this.syncAllGroups();
     this.registerListeners();
     this.api.listener.start();
@@ -30,6 +36,20 @@ export class SimpleBot {
 
   public stop(): void {
     this.api.listener.stop();
+  }
+
+  public status(): BotStatus {
+    return {
+      userId: this.ownId,
+      displayName: this.profile.displayName,
+      avatar: this.profile.avatar,
+      startedAt: this.startedAt,
+      uptimeSeconds: Math.floor((now() - this.startedAt) / 1000),
+      connected: this.connected,
+      connectionChangedAt: this.connectionChangedAt,
+      groupMessagesSeen: this.groupMessagesSeen,
+      violationsHandled: this.enforcer.handledMessageCount,
+    };
   }
 
   public async sendToUser(userId: string, text: string): Promise<void> {
@@ -109,6 +129,22 @@ export class SimpleBot {
     return info;
   }
 
+  // The name and avatar are only for display, so the bot starts without them if Zalo refuses.
+  private async loadProfile(): Promise<void> {
+    try {
+      const { profile } = await this.api.fetchAccountInfo();
+      this.profile = { displayName: profile.displayName || profile.zaloName, avatar: profile.avatar };
+    } catch {
+      // Keep the empty profile.
+    }
+  }
+
+  private setConnected(connected: boolean): void {
+    if (this.connected === connected) return;
+    this.connected = connected;
+    this.connectionChangedAt = now();
+  }
+
   private async currentGroup(groupId: string): Promise<LiveGroupInfo | undefined> {
     const cached = this.groupCache.get(groupId);
     if (cached !== undefined && cached.expiresAt > now()) return cached.info;
@@ -132,6 +168,7 @@ export class SimpleBot {
     const groupId = message.threadId;
     const userId = message.data.uidFrom;
     if (this.recentMessages.isDuplicate(groupId, message.data.msgId || message.data.cliMsgId)) return;
+    this.groupMessagesSeen += 1;
     let group = await this.store.getGroup(groupId);
     // Nothing to do in a group with every rule switched off, so skip the Zalo lookup.
     if (group !== undefined && !group.botEnabled && !group.badWordFilterEnabled) return;
@@ -166,7 +203,9 @@ export class SimpleBot {
   }
 
   private registerListeners(): void {
-    this.api.listener.on("connected", () => undefined);
+    this.api.listener.on("connected", () => this.setConnected(true));
+    this.api.listener.on("disconnected", () => this.setConnected(false));
+    this.api.listener.on("closed", () => this.setConnected(false));
     this.api.listener.on("message", (message: Message) => {
       void this.handleMessage(message).catch(() => undefined);
     });

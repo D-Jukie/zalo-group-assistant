@@ -34,8 +34,14 @@ function errorMessage(error: unknown): string {
 // when they broke the same rule often enough within the group's time window.
 export class Enforcer {
   private readonly kickInFlight = new Set<string>();
+  private handledMessages = 0;
 
   public constructor(private readonly api: EnforcerApi, private readonly store: EnforcerStore) {}
+
+  // How many messages were reported as violations since the bot started.
+  public get handledMessageCount(): number {
+    return this.handledMessages;
+  }
 
   // Returns the reportViolation function for one message. A message that breaks several rules is
   // deleted once and counts once for each rule it broke.
@@ -45,8 +51,13 @@ export class Enforcer {
     const userId = message.data.uidFrom;
     const messageId = message.data.msgId || message.data.cliMsgId;
     let deletion: Promise<boolean> | undefined;
+    let counted = false;
 
     return async (rule, detail) => {
+      if (!counted) {
+        counted = true;
+        this.handledMessages += 1;
+      }
       // Deleting needs admin rights. It starts right away and does not wait for the database,
       // so a slow or failing database never leaves the message in the group.
       if (botIsAdmin) deletion ??= this.deleteMessage(message, messageId);
