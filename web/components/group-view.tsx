@@ -3,11 +3,11 @@
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useState, type FormEvent, type ReactNode } from "react";
 import useSWR, { useSWRConfig } from "swr";
 import { ApiError, errorText, send } from "@/lib/api";
 import { formatDateTime, formatKickRule, formatNumber, splitWindow, windowUnits } from "@/lib/format";
-import { ruleLabels, violationRules, type Group, type GroupToggle, type KickRule, type MemberViolations, type ViolationMessage, type ViolationRule } from "@/lib/types";
+import { ruleLabels, totalViolations, violationRules, type Group, type GroupToggle, type KickRule, type MemberViolations, type RateRule, type SpamSettings, type ViolationMessage, type ViolationRule } from "@/lib/types";
 import { ConfirmDialog } from "./confirm-dialog";
 import { ListManager } from "./list-manager";
 import { Badge, Button, Card, CardHeader, EmptyState, ErrorNote, Input, PageHeader, Skeleton, Switch } from "./ui";
@@ -103,8 +103,81 @@ function KickSetting({ group, rule, featureOn, onSaved }: { group: Group; rule: 
   );
 }
 
+// While being edited the numbers are plain text, so a field can be emptied and retyped; they
+// become numbers again when sent to the bot.
+type RateDraft = { enabled: boolean; count: string; windowSeconds: string };
+type SpamDraft = { flood: RateDraft; repeat: RateDraft; contact: { enabled: boolean } };
+
+function toDraft(settings: SpamSettings): SpamDraft {
+  const rate = (rule: RateRule): RateDraft => ({ enabled: rule.enabled, count: String(rule.count), windowSeconds: String(rule.windowSeconds) });
+  return { flood: rate(settings.flood), repeat: rate(settings.repeat), contact: { enabled: settings.contact.enabled } };
+}
+
+function fromDraft(draft: SpamDraft): SpamSettings {
+  const rate = (rule: RateDraft): RateRule => ({ enabled: rule.enabled, count: Number(rule.count), windowSeconds: Number(rule.windowSeconds) });
+  return { flood: rate(draft.flood), repeat: rate(draft.repeat), contact: { enabled: draft.contact.enabled } };
+}
+
+// The spam guard's own settings for this group. Nothing is saved until the form is submitted.
+function SpamSettingsForm({ group, onSaved }: { group: Group; onSaved: (group: Group) => void }) {
+  const saved = group.spamSettings;
+  const [settings, setSettings] = useState<SpamDraft>(() => toDraft(saved));
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string>();
+  const dirty = JSON.stringify(settings) !== JSON.stringify(toDraft(saved));
+  const disabled = !group.spamGuardEnabled;
+
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(undefined);
+    setPending(true);
+    try {
+      onSaved(await send<Group>("PATCH", `/groups/${encodeURIComponent(group.groupId)}/spam-settings`, fromDraft(settings)));
+    } catch (exception) {
+      setError(errorText(exception));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  const rateRow = (key: "flood" | "repeat", label: string, unit: string) => {
+    const rule = settings[key];
+    const change = (changes: Partial<RateDraft>) => setSettings((current) => ({ ...current, [key]: { ...current[key], ...changes } }));
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="flex cursor-pointer items-center gap-2 font-medium">
+          <input type="checkbox" name={`${key}-enabled`} checked={rule.enabled} onChange={(event) => change({ enabled: event.target.checked })} className="size-4 accent-[var(--accent)]" />
+          {label}
+        </label>
+        <label htmlFor={`spam-${key}-count`} className="sr-only">Số {unit} của mục {label}</label>
+        <Input id={`spam-${key}-count`} name={`${key}-count`} type="number" inputMode="numeric" autoComplete="off" min={2} max={50} required disabled={!rule.enabled} value={rule.count} onChange={(event) => change({ count: event.target.value })} className="w-20 tabular-nums" />
+        <span>{unit} trong</span>
+        <label htmlFor={`spam-${key}-window`} className="sr-only">Số giây của mục {label}</label>
+        <Input id={`spam-${key}-window`} name={`${key}-window`} type="number" inputMode="numeric" autoComplete="off" min={1} max={3600} required disabled={!rule.enabled} value={rule.windowSeconds} onChange={(event) => change({ windowSeconds: event.target.value })} className="w-20 tabular-nums" />
+        <span>giây</span>
+      </div>
+    );
+  };
+
+  return (
+    <form onSubmit={save} className="py-3">
+      <fieldset disabled={disabled} className="space-y-3 text-sm disabled:opacity-60">
+        <legend className="mb-3 text-sm font-medium">Bị tính là spam khi</legend>
+        {rateRow("flood", "Gửi dồn dập:", "tin")}
+        {rateRow("repeat", "Lặp nội dung:", "lần")}
+        <label className="flex cursor-pointer items-start gap-2">
+          <input type="checkbox" name="contact-enabled" checked={settings.contact.enabled} onChange={(event) => setSettings((current) => ({ ...current, contact: { enabled: event.target.checked } }))} className="mt-0.5 size-4 accent-[var(--accent)]" />
+          <span><span className="font-medium">Có số điện thoại hoặc số tài khoản</span><span className="block text-muted">Tắt sẵn vì thành viên cũng hay gửi số điện thoại cho việc bình thường.</span></span>
+        </label>
+        {dirty ? <Button type="submit" variant="primary" pending={pending}>Lưu cài đặt spam</Button> : null}
+      </fieldset>
+      <ErrorNote message={error} />
+    </form>
+  );
+}
+
 // One feature of the bot in this group: its on/off switch and, underneath, its own kick setting.
-function FeatureCard({ group, rule, toggleName, enabled, title, description, onChange }: {
+function FeatureCard({ group, rule, toggleName, enabled, title, description, onChange, children }: {
   group: Group;
   rule: ViolationRule;
   toggleName: GroupToggle;
@@ -112,6 +185,8 @@ function FeatureCard({ group, rule, toggleName, enabled, title, description, onC
   title: string;
   description: string;
   onChange: (group: Group) => void;
+  // The feature's own settings, shown between its switch and its kick setting.
+  children?: ReactNode;
 }) {
   const { toggle, error } = useToggle(group, onChange);
   const kickRule = group.kickRules[rule];
@@ -128,6 +203,7 @@ function FeatureCard({ group, rule, toggleName, enabled, title, description, onC
           />
           <ErrorNote message={error} />
         </div>
+        {children}
         <KickSetting
           // Saved numbers remount the form so its fields show the stored values again.
           key={`${kickRule.enabled}-${kickRule.count}-${kickRule.windowSeconds}`}
@@ -162,6 +238,18 @@ function SettingsCards({ group, onChange }: { group: Group; onChange: (group: Gr
         description="Tin chứa từ hoặc cụm từ trong danh sách chung hoặc danh sách riêng của nhóm."
         onChange={onChange}
       />
+      <FeatureCard
+        group={group}
+        rule="spam"
+        toggleName="spam"
+        enabled={group.spamGuardEnabled}
+        title="Chống spam"
+        description="Bắt theo cách thành viên gửi tin: gửi dồn dập, lặp một nội dung, hoặc tin có số điện thoại, số tài khoản."
+        onChange={onChange}
+      >
+        {/* Saved settings remount the form so its fields show the stored values again. */}
+        <SpamSettingsForm key={JSON.stringify(group.spamSettings)} group={group} onSaved={onChange} />
+      </FeatureCard>
     </div>
   );
 }
@@ -294,7 +382,7 @@ function Statistics({ group }: { group: Group }) {
                       <span className="block truncate font-mono text-xs text-muted" translate="no">{member.userId}</span>
                     </th>
                     {violationRules.map((rule) => <td key={rule} className="px-5 py-3 text-right tabular-nums">{formatNumber(member.counts[rule])}</td>)}
-                    <td className="px-5 py-3 text-right font-medium tabular-nums">{formatNumber(member.counts.link + member.counts.badWord)}</td>
+                    <td className="px-5 py-3 text-right font-medium tabular-nums">{formatNumber(totalViolations(member.counts))}</td>
                     <td className="px-5 py-3 text-right tabular-nums">{formatNumber(member.kicks)}</td>
                     <td className="whitespace-nowrap px-5 py-3 text-muted"><span className="tabular-nums">{formatDateTime(member.lastAt)}</span> · {ruleLabels[member.lastRule]}</td>
                     <td className="px-5 py-3">
@@ -359,6 +447,7 @@ export function GroupView({ groupId }: { groupId: string }) {
   const featureSummary = !group.botEnabled ? "Bot đang tắt" : [
     group.linkGuardEnabled ? `Chặn link (${formatKickRule(group.kickRules.link, group.botIsAdmin)})` : undefined,
     group.badWordFilterEnabled ? `Lọc từ cấm (${formatKickRule(group.kickRules.badWord, group.botIsAdmin)})` : undefined,
+    group.spamGuardEnabled ? `Chống spam (${formatKickRule(group.kickRules.spam, group.botIsAdmin)})` : undefined,
   ].filter(Boolean).join(" · ") || "Chưa bật tính năng nào";
 
   return (

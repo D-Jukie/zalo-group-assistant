@@ -1,13 +1,23 @@
 // Shapes of the bot API's JSON. Kept in step with src/types.ts in the bot.
 
-export type ViolationRule = "link" | "badWord";
+export type ViolationRule = "link" | "badWord" | "spam";
 
-export const violationRules: readonly ViolationRule[] = ["link", "badWord"];
+export const violationRules: readonly ViolationRule[] = ["link", "badWord", "spam"];
 
-export const ruleLabels: Record<ViolationRule, string> = { link: "Link", badWord: "Từ cấm" };
+export const ruleLabels: Record<ViolationRule, string> = { link: "Link", badWord: "Từ cấm", spam: "Spam" };
+
+export function totalViolations(counts: Record<ViolationRule, number>): number {
+  return violationRules.reduce((sum, rule) => sum + counts[rule], 0);
+}
+
+// "At least count times within windowSeconds", with a switch.
+export type RateRule = { enabled: boolean; count: number; windowSeconds: number };
+
+// What the spam guard looks for in a group: bursts of messages, repeated text, contact details.
+export type SpamSettings = { flood: RateRule; repeat: RateRule; contact: { enabled: boolean } };
 
 // Kicking belongs to a feature: each rule has its own switch, count and time window.
-export type KickRule = { enabled: boolean; count: number; windowSeconds: number };
+export type KickRule = RateRule;
 
 export type Group = {
   groupId: string;
@@ -17,6 +27,8 @@ export type Group = {
   botEnabled: boolean;
   linkGuardEnabled: boolean;
   badWordFilterEnabled: boolean;
+  spamGuardEnabled: boolean;
+  spamSettings: SpamSettings;
   kickRules: Record<ViolationRule, KickRule>;
   botIsAdmin: boolean;
   updatedAt: number;
@@ -30,13 +42,14 @@ export type GroupSummary = {
   total: number;
   botAdmin: number;
   enabled: number;
-  // The next three only count groups where the bot is switched on.
+  // The rest only count groups where the bot is switched on.
   linkGuard: number;
   badWordFilter: number;
+  spamGuard: number;
   kicking: number;
 };
 
-export type GroupToggle = "bot" | "links" | "bad-words";
+export type GroupToggle = "bot" | "links" | "bad-words" | "spam";
 
 export type BotStatus = {
   userId: string;

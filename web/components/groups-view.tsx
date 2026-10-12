@@ -25,12 +25,13 @@ const filters = [
 
 function RuleBadges({ group }: { group: Group }) {
   if (!group.botEnabled) return <span className="text-sm text-subtle">—</span>;
-  if (!group.linkGuardEnabled && !group.badWordFilterEnabled) return <span className="block truncate text-sm text-subtle">Chưa bật tính năng nào</span>;
+  if (!group.linkGuardEnabled && !group.badWordFilterEnabled && !group.spamGuardEnabled) return <span className="block truncate text-sm text-subtle">Chưa bật tính năng nào</span>;
   return (
     <span className="flex gap-1.5 overflow-hidden">
       {group.linkGuardEnabled ? <Badge tone="success">Chặn link</Badge> : null}
       {group.badWordFilterEnabled ? <Badge tone="success">Lọc từ cấm</Badge> : null}
-      {group.botIsAdmin && ((group.linkGuardEnabled && group.kickRules.link.enabled) || (group.badWordFilterEnabled && group.kickRules.badWord.enabled)) ? <Badge tone="warning">Kick</Badge> : null}
+      {group.spamGuardEnabled ? <Badge tone="success">Chống spam</Badge> : null}
+      {group.botIsAdmin && ((group.linkGuardEnabled && group.kickRules.link.enabled) || (group.badWordFilterEnabled && group.kickRules.badWord.enabled) || (group.spamGuardEnabled && group.kickRules.spam.enabled)) ? <Badge tone="warning">Kick</Badge> : null}
     </span>
   );
 }
@@ -201,14 +202,14 @@ export function GroupsView() {
         ) : (
           <div className="overflow-x-auto">
             {/* Fixed column widths and row heights: the table keeps its shape whatever the names, badges or page. */}
-            <table className="w-full min-w-[58rem] table-fixed text-sm">
+            <table className="w-full min-w-[64rem] table-fixed text-sm">
               <caption className="sr-only">Danh sách nhóm</caption>
               <colgroup>
                 <col />
                 <col className="w-28" />
                 <col className="w-28" />
                 <col className="w-36" />
-                <col className="w-64" />
+                <col className="w-[22rem]" />
                 <col className="w-40" />
               </colgroup>
               <thead>

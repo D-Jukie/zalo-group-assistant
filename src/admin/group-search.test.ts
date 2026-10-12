@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { defaultKickRules, type AdminGroupView } from "../types.js";
+import { defaultKickRules, defaultSpamSettings, type AdminGroupView } from "../types.js";
 import { searchGroups, summarizeGroups, type GroupQuery } from "./group-search.js";
 
 function group(groupId: string, name: string, overrides: Partial<AdminGroupView> = {}): AdminGroupView {
@@ -13,6 +13,8 @@ function group(groupId: string, name: string, overrides: Partial<AdminGroupView>
     botEnabled: false,
     linkGuardEnabled: false,
     badWordFilterEnabled: false,
+    spamGuardEnabled: false,
+    spamSettings: defaultSpamSettings,
     kickRules: defaultKickRules,
     botIsAdmin: false,
     updatedAt: 0,
@@ -25,8 +27,9 @@ const groups = [
   group("100", "Nhóm bán hàng", { botIsAdmin: true, botEnabled: true, linkGuardEnabled: true, kickRules: kickLinks }),
   group("200", "Nhóm bạn bè", { botEnabled: true, badWordFilterEnabled: true, linkGuardEnabled: true, kickRules: kickLinks }),
   group("300", "Cộng đồng lập trình", { botIsAdmin: true, linkGuardEnabled: true }),
-  group("400", "Đội bóng phường"),
+  group("400", "Đội bóng phường", { botEnabled: false, spamGuardEnabled: true }),
   group("500", "Hội phụ huynh"),
+  group("600", "Chợ cư dân", { botIsAdmin: true, botEnabled: true, spamGuardEnabled: true, kickRules: { ...defaultKickRules, spam: { enabled: true, count: 3, windowSeconds: 60 } } }),
 ];
 // Real Zalo IDs are long numbers; these two also contain "10" and "12345".
 const numbered = [
@@ -59,25 +62,25 @@ await test("a short number only searches names, not IDs", () => {
 });
 
 await test("applies the filter together with the search text", () => {
-  assert.deepEqual(ids({ filter: "enabled" }), ["100", "200"]);
-  assert.deepEqual(ids({ filter: "admin" }), ["100", "300"]);
+  assert.deepEqual(ids({ filter: "enabled" }), ["100", "200", "600"]);
+  assert.deepEqual(ids({ filter: "admin" }), ["100", "300", "600"]);
   assert.deepEqual(ids({ filter: "member" }), ["200", "400", "500"]);
   assert.deepEqual(ids({ filter: "member", text: "nhom" }), ["200"]);
 });
 
 await test("pages the matches and reports the total", () => {
   const first = searchGroups(groups, query({ pageSize: 2 }));
-  assert.deepEqual([first.items.map((item) => item.groupId), first.total, first.page, first.pageSize], [["100", "200"], 5, 1, 2]);
-  assert.deepEqual(ids({ pageSize: 2, page: 3 }), ["500"]);
+  assert.deepEqual([first.items.map((item) => item.groupId), first.total, first.page, first.pageSize], [["100", "200"], 6, 1, 2]);
+  assert.deepEqual(ids({ pageSize: 2, page: 3 }), ["500", "600"]);
 });
 
 await test("clamps a page past the end to the last page", () => {
   const page = searchGroups(groups, query({ pageSize: 2, page: 99 }));
-  assert.deepEqual([page.page, page.items.map((item) => item.groupId)], [3, ["500"]]);
+  assert.deepEqual([page.page, page.items.map((item) => item.groupId)], [3, ["500", "600"]]);
   assert.equal(searchGroups(groups, query({ text: "zzz", page: 4 })).page, 1);
 });
 
 await test("summarises the groups for the dashboard", () => {
-  // Group 300 has link blocking set but the bot off, and group 200 kicks on paper but the bot is not an admin there.
-  assert.deepEqual(summarizeGroups(groups), { total: 5, botAdmin: 2, enabled: 2, linkGuard: 2, badWordFilter: 1, kicking: 1 });
+  // Groups 300 and 400 have a feature set but the bot off, and group 200 kicks on paper but the bot is not an admin there.
+  assert.deepEqual(summarizeGroups(groups), { total: 6, botAdmin: 3, enabled: 3, linkGuard: 2, badWordFilter: 1, spamGuard: 1, kicking: 2 });
 });

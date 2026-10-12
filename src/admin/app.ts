@@ -3,7 +3,8 @@ import type { SimpleBot } from "../bot/simple-bot.js";
 import type { BannedWords } from "../moderation/banned-words.js";
 import type { BlockedLinks } from "../moderation/blocked-links.js";
 import type { Store } from "../storage/store.js";
-import { violationRules, type GroupSetting, type ViolationRule } from "../types.js";
+import { violationRules, type GroupSetting, type RateRule, type ViolationRule } from "../types.js";
+import { maxSpamWindowSeconds } from "../moderation/spam-detector.js";
 import { isRecord } from "../utils.js";
 import { groupFilters, searchGroups, summarizeGroups, type GroupFilter } from "./group-search.js";
 import type { LoginCodeService } from "./login-code.js";
@@ -14,9 +15,11 @@ const groupToggles: ReadonlyMap<string, GroupSetting> = new Map([
   ["bot", "botEnabled"],
   ["links", "linkGuardEnabled"],
   ["bad-words", "badWordFilterEnabled"],
+  ["spam", "spamGuardEnabled"],
 ]);
 const maxKickCount = 100;
 const maxKickWindowSeconds = 7 * 24 * 60 * 60;
+const maxSpamCount = 50;
 const overviewDays = 14;
 const recentViolationLimit = 20;
 const violationPageSize = 30;
@@ -34,6 +37,13 @@ type ManagedList = Readonly<{
   add(input: string, groupId?: string): Promise<boolean>;
   remove(value: string, groupId?: string): Promise<void>;
 }>;
+
+// A spam check needs at least two messages to mean anything, and cannot look back further than the detector remembers.
+function parseSpamRate(value: unknown): RateRule | undefined {
+  if (!isRecord(value) || typeof value.enabled !== "boolean") return undefined;
+  if (!isIntegerBetween(value.count, 2, maxSpamCount) || !isIntegerBetween(value.windowSeconds, 1, maxSpamWindowSeconds)) return undefined;
+  return { enabled: value.enabled, count: value.count, windowSeconds: value.windowSeconds };
+}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -205,6 +215,22 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
       return;
     }
     response.json(group);
+  });
+  app.patch("/api/groups/:groupId/spam-settings", async (request, response) => {
+    const body: unknown = request.body;
+    const flood = isRecord(body) ? parseSpamRate(body.flood) : undefined;
+    const repeat = isRecord(body) ? parseSpamRate(body.repeat) : undefined;
+    const contact = isRecord(body) && isRecord(body.contact) && typeof body.contact.enabled === "boolean" ? { enabled: body.contact.enabled } : undefined;
+    if (flood === undefined || repeat === undefined || contact === undefined) {
+      response.status(400).json({ error: `Số tin phải từ 2 đến ${maxSpamCount} và khoảng thời gian từ 1 giây đến 1 giờ` });
+      return;
+    }
+    const updated = await store.setSpamSettings(request.params.groupId, { flood, repeat, contact });
+    if (updated === undefined) {
+      response.status(404).json({ error: "Không tìm thấy nhóm" });
+      return;
+    }
+    response.json(await bot.getGroup(request.params.groupId) ?? updated);
   });
   app.patch("/api/groups/:groupId/kick-rule", async (request, response) => {
     const body: unknown = request.body;

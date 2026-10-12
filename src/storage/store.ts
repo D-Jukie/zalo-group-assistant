@@ -1,6 +1,6 @@
 import { MongoClient, type Collection, type UpdateFilter } from "mongodb";
 import { GroupEventType, type GroupInfo } from "zca-js";
-import { defaultKickRules, violationRules, type DailyViolations, type GroupSetting, type JsonRecord, type KickRule, type KickRules, type MemberViolations, type RecentViolation, type StoredGroup, type ViolationMatch, type ViolationMessage, type ViolationMessageStatus, type ViolationRule } from "../types.js";
+import { defaultKickRules, defaultSpamSettings, violationRules, type DailyViolations, type GroupSetting, type JsonRecord, type KickRule, type KickRules, type MemberViolations, type RecentViolation, type SpamSettings, type StoredGroup, type ViolationMatch, type ViolationMessage, type ViolationMessageStatus, type ViolationRule } from "../types.js";
 import type { EncryptedSecret } from "./secret-box.js";
 import { asNumber, asString, escapeRegExp, isRecord, now, uniqueStrings } from "../utils.js";
 
@@ -14,6 +14,8 @@ type GroupDocument = {
   // The rest are missing on groups stored before those features existed.
   linkGuardEnabled?: boolean;
   badWordFilterEnabled?: boolean;
+  spamGuardEnabled?: boolean;
+  spamSettings?: Partial<SpamSettings>;
   // Rules saved before kicking became a per-feature setting have no `enabled` of their own.
   kickRules?: Partial<Record<ViolationRule, Readonly<{ enabled?: boolean; count: number; windowSeconds: number }>>>;
   // The two older ways of switching kicking on, only read so groups saved by older versions keep their behaviour:
@@ -131,7 +133,7 @@ export class Store {
           memberCount: info.totalMember,
           updatedAt: now(),
         },
-        $setOnInsert: { botEnabled: false, linkGuardEnabled: false, badWordFilterEnabled: false },
+        $setOnInsert: { botEnabled: false, linkGuardEnabled: false, badWordFilterEnabled: false, spamGuardEnabled: false },
       },
       { upsert: true },
     );
@@ -161,6 +163,16 @@ export class Store {
     const fields: Partial<GroupDocument> = {};
     fields[setting] = enabled;
     return this.updateGroup(groupId, fields);
+  }
+
+  public async setSpamSettings(groupId: string, settings: SpamSettings): Promise<StoredGroup | undefined> {
+    return this.updateGroup(groupId, {
+      spamSettings: {
+        flood: { enabled: settings.flood.enabled, count: settings.flood.count, windowSeconds: settings.flood.windowSeconds },
+        repeat: { enabled: settings.repeat.enabled, count: settings.repeat.count, windowSeconds: settings.repeat.windowSeconds },
+        contact: { enabled: settings.contact.enabled },
+      },
+    });
   }
 
   public async setKickRule(groupId: string, rule: ViolationRule, kickRule: KickRule): Promise<StoredGroup | undefined> {
@@ -273,7 +285,8 @@ export class Store {
       const day = new Date(firstDay);
       day.setDate(firstDay.getDate() + index);
       const date = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
-      return { date, link: counts.get(`${date}:link`) ?? 0, badWord: counts.get(`${date}:badWord`) ?? 0 };
+      const perRule = Object.fromEntries(violationRules.map((rule) => [rule, counts.get(`${date}:${rule}`) ?? 0])) as Record<ViolationRule, number>;
+      return { date, ...perRule };
     });
   }
 
@@ -363,6 +376,7 @@ export class Store {
     return {
       link: read("link") ?? (document.linkSpamKickEnabled === true ? legacyLinkKickRule : defaultKickRules.link),
       badWord: read("badWord") ?? defaultKickRules.badWord,
+      spam: read("spam") ?? defaultKickRules.spam,
     };
   }
 
@@ -388,6 +402,8 @@ export class Store {
       botEnabled: document.botEnabled,
       linkGuardEnabled: document.linkGuardEnabled ?? false,
       badWordFilterEnabled: document.badWordFilterEnabled ?? false,
+      spamGuardEnabled: document.spamGuardEnabled ?? false,
+      spamSettings: { ...defaultSpamSettings, ...document.spamSettings },
       kickRules: this.toKickRules(document),
       updatedAt: document.updatedAt,
     };

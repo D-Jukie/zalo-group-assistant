@@ -2,11 +2,11 @@
 
 import { useState } from "react";
 import { cn, formatDay, formatNumber } from "@/lib/format";
-import { ruleLabels, violationRules, type DailyViolations, type ViolationRule } from "@/lib/types";
+import { ruleLabels, totalViolations, violationRules, type DailyViolations, type ViolationRule } from "@/lib/types";
 import { Button, EmptyState } from "./ui";
 
-// Series colours follow the rule, never its position: link is always series 1, banned words series 2.
-const seriesColor: Record<ViolationRule, string> = { link: "bg-series-1", badWord: "bg-series-2" };
+// Series colours follow the rule, never its position: link is always series 1, banned words series 2, spam series 3.
+const seriesColor: Record<ViolationRule, string> = { link: "bg-series-1", badWord: "bg-series-2", spam: "bg-series-3" };
 const plotHeight = 208;
 
 // Rounds the axis top up to a clean number so the ticks read 0 / 5 / 10 rather than 0 / 3.5 / 7.
@@ -47,7 +47,7 @@ function DataTable({ series }: { series: DailyViolations[] }) {
             <tr key={day.date} className="border-b border-border last:border-0">
               <th scope="row" className="py-2 pr-4 text-left font-normal">{formatDay(day.date, "long")}</th>
               {violationRules.map((rule) => <td key={rule} className="py-2 pr-4 text-right">{formatNumber(day[rule])}</td>)}
-              <td className="py-2 text-right font-medium">{formatNumber(day.link + day.badWord)}</td>
+              <td className="py-2 text-right font-medium">{formatNumber(totalViolations(day))}</td>
             </tr>
           ))}
         </tbody>
@@ -60,8 +60,8 @@ function DataTable({ series }: { series: DailyViolations[] }) {
 export function ViolationsChart({ series }: { series: DailyViolations[] }) {
   const [activeIndex, setActiveIndex] = useState<number>();
   const [showTable, setShowTable] = useState(false);
-  const total = series.reduce((sum, day) => sum + day.link + day.badWord, 0);
-  const top = niceMax(Math.max(...series.map((day) => day.link + day.badWord)));
+  const total = series.reduce((sum, day) => sum + totalViolations(day), 0);
+  const top = niceMax(Math.max(...series.map(totalViolations)));
   const ticks = [top, top / 2, 0];
   const active = activeIndex === undefined ? undefined : series[activeIndex];
 
@@ -89,22 +89,24 @@ export function ViolationsChart({ series }: { series: DailyViolations[] }) {
               ))}
               <ul className="absolute inset-0 flex">
                 {series.map((day, index) => {
-                  const dayTotal = day.link + day.badWord;
+                  const dayTotal = totalViolations(day);
+                  // Segments stack upwards in rule order; only rules with violations that day take part.
+                  const present = violationRules.filter((rule) => day[rule] > 0);
                   return (
                     <li key={day.date} className="flex min-w-0 flex-1">
                       <button
                         type="button"
-                        aria-label={`${formatDay(day.date, "long")}: ${dayTotal} tin vi phạm, ${day.link} link, ${day.badWord} từ cấm`}
+                        aria-label={`${formatDay(day.date, "long")}: ${dayTotal} tin vi phạm` + violationRules.map((rule) => `, ${ruleLabels[rule]} ${day[rule]}`).join("")}
                         onMouseEnter={() => setActiveIndex(index)}
                         onFocus={() => setActiveIndex(index)}
                         onBlur={() => setActiveIndex(undefined)}
                         className={cn("flex w-full flex-col-reverse items-center rounded-sm", activeIndex === index && "bg-surface-hover")}
                       >
                         {/* The 2px gaps between segments and above the baseline are the surface showing through, not strokes. */}
-                        {violationRules.map((rule, position) => day[rule] === 0 ? null : (
+                        {present.map((rule, position) => (
                           <span
                             key={rule}
-                            className={cn("w-full max-w-6", seriesColor[rule], position > 0 && day.link > 0 ? "mb-0.5" : "", position === violationRules.length - 1 || day.badWord === 0 ? "rounded-t" : "")}
+                            className={cn("w-full max-w-6", seriesColor[rule], position > 0 && "mb-0.5", position === present.length - 1 && "rounded-t")}
                             style={{ height: `${(day[rule] / top) * 100}%` }}
                           />
                         ))}
@@ -132,7 +134,7 @@ export function ViolationsChart({ series }: { series: DailyViolations[] }) {
                     ))}
                     <li className="flex justify-between gap-3 border-t border-border pt-1 font-medium">
                       <span>Tổng</span>
-                      <span>{formatNumber(active.link + active.badWord)}</span>
+                      <span>{formatNumber(totalViolations(active))}</span>
                     </li>
                   </ul>
                 </div>

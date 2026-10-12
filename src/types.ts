@@ -4,13 +4,16 @@ export type JsonRecord = Record<string, unknown>;
 
 export type LiveGroupInfo = GroupInfo & Readonly<{ memVerList?: readonly string[] }>;
 
-export type ViolationRule = "link" | "badWord";
+export type ViolationRule = "link" | "badWord" | "spam";
 
-export const violationRules: readonly ViolationRule[] = ["link", "badWord"];
+export const violationRules: readonly ViolationRule[] = ["link", "badWord", "spam"];
+
+// "At least `count` times within `windowSeconds`", with a switch.
+export type RateRule = Readonly<{ enabled: boolean; count: number; windowSeconds: number }>;
 
 // Each feature decides for itself whether breaking its rule can get a member kicked: when enabled,
 // a member is removed after `count` violations of that rule within `windowSeconds`.
-export type KickRule = Readonly<{ enabled: boolean; count: number; windowSeconds: number }>;
+export type KickRule = RateRule;
 
 export type KickRules = Readonly<Record<ViolationRule, KickRule>>;
 
@@ -19,6 +22,24 @@ export type KickRules = Readonly<Record<ViolationRule, KickRule>>;
 export const defaultKickRules: KickRules = {
   link: { enabled: false, count: 3, windowSeconds: 10 },
   badWord: { enabled: false, count: 3, windowSeconds: 10 * 60 },
+  spam: { enabled: false, count: 3, windowSeconds: 60 },
+};
+
+// What the spam guard looks for in a group. Each check has its own switch.
+export type SpamSettings = Readonly<{
+  // Any messages at all arriving in a burst from one member.
+  flood: RateRule;
+  // The same text sent again and again by one member.
+  repeat: RateRule;
+  // A phone number or bank account in the message.
+  contact: Readonly<{ enabled: boolean }>;
+}>;
+
+// Contact details are off by default because members share phone numbers for ordinary reasons too.
+export const defaultSpamSettings: SpamSettings = {
+  flood: { enabled: true, count: 5, windowSeconds: 10 },
+  repeat: { enabled: true, count: 3, windowSeconds: 60 },
+  contact: { enabled: false },
 };
 
 export type StoredGroup = Readonly<{
@@ -31,6 +52,8 @@ export type StoredGroup = Readonly<{
   botEnabled: boolean;
   linkGuardEnabled: boolean;
   badWordFilterEnabled: boolean;
+  spamGuardEnabled: boolean;
+  spamSettings: SpamSettings;
   kickRules: KickRules;
   updatedAt: number;
 }>;
@@ -44,6 +67,8 @@ export type AdminGroupView = Readonly<{
   botEnabled: boolean;
   linkGuardEnabled: boolean;
   badWordFilterEnabled: boolean;
+  spamGuardEnabled: boolean;
+  spamSettings: SpamSettings;
   kickRules: KickRules;
   // Without admin rights the bot cannot delete or kick, so it only records violations.
   botIsAdmin: boolean;
@@ -67,7 +92,7 @@ export type BotStatus = Readonly<{
 }>;
 
 // The per-group on/off switches.
-export type GroupSetting = "botEnabled" | "linkGuardEnabled" | "badWordFilterEnabled";
+export type GroupSetting = "botEnabled" | "linkGuardEnabled" | "badWordFilterEnabled" | "spamGuardEnabled";
 
 export type ViolationMatch = Readonly<{ rule: ViolationRule; detail: string }>;
 

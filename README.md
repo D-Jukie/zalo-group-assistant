@@ -8,6 +8,7 @@ Bot sẽ:
 - Đọc QR trong ảnh JPEG/PNG bằng `jsQR`; ảnh chỉ bị tính là vi phạm khi nội dung QR là link bị chặn.
 - Phát hiện thêm link của các trang web do quản trị viên tự thêm trên dashboard (xem [Link bị chặn thêm](#link-bị-chặn-thêm)).
 - Phát hiện từ cấm do quản trị viên tự thêm (xem [Lọc từ cấm](#lọc-từ-cấm)).
+- Phát hiện spam theo hành vi: gửi dồn dập, lặp nội dung, tin có số điện thoại hoặc số tài khoản (xem [Chống spam](#chống-spam)).
 - Ghi nhận mỗi vi phạm vào thống kê theo nhóm, xóa tin vi phạm, và kick thành viên vi phạm dồn dập trong khoảng thời gian do bạn đặt (xem [Xử lý vi phạm và thống kê](#xử-lý-vi-phạm-và-thống-kê)).
 - Bỏ qua tin nhắn của chủ nhóm/QTV.
 - Hoạt động cả ở nhóm bot không phải QTV: ở đó bot chỉ ghi nhận vi phạm, không xóa tin và không kick.
@@ -49,7 +50,7 @@ Dashboard là ứng dụng Next.js (App Router, Tailwind CSS, SWR) trong `web/`.
 | `/dashboard` | Thông tin bot, các con số tổng quan, biểu đồ vi phạm 14 ngày, 20 tin vi phạm gần nhất |
 | `/groups` | Danh sách nhóm, có công tắc bật tắt bot cho từng nhóm, tìm kiếm, bộ lọc và phân trang (lưu trên URL). Bot thực hiện việc tìm, lọc và chia trang; ô tìm chờ 250ms sau khi ngừng gõ rồi mới gửi yêu cầu, và tìm được theo tên không dấu, hoặc theo ID nhóm khi gõ từ 6 chữ số trở lên |
 | `/group/<id>` | Bật bot cho nhóm, từng tính năng kèm cài đặt kick riêng của nó, link bị chặn và từ cấm riêng, thống kê vi phạm theo thành viên, tin vi phạm đã lưu |
-| `/features` | Cài đặt dùng chung của từng tính năng (Chặn link, Lọc từ cấm): danh sách link và từ cấm chung, ô thử một câu |
+| `/features` | Cài đặt dùng chung của từng tính năng (Chặn link, Lọc từ cấm, Chống spam): danh sách link và từ cấm chung, ô thử một câu, mô tả chống spam |
 | `/violations` | Nhật ký vi phạm trên mọi nhóm, lọc theo quy tắc, tải thêm tin cũ hơn |
 | `/setting` | Cài đặt của chính bảng điều khiển: sáng/tối, tự làm mới, số nhóm mỗi trang, kết nối tới bot, đăng xuất |
 
@@ -129,15 +130,32 @@ Cách so khớp:
 - Nếu đã có từ cấm mà chưa nhóm nào bật `Lọc từ cấm`, mục `Từ cấm chung` ở trang `/features` ghi rõ đang bật ở 0 nhóm.
 - Chỉ kiểm tra nội dung chữ của tin nhắn và tiêu đề/mô tả của tin link hoặc ảnh.
 
+## Chống spam
+
+Hai tính năng trên xét nội dung của từng tin; chống spam xét cách một thành viên gửi tin. Mỗi nhóm bật riêng trong thẻ `Chống spam` ở trang `/group/<id>` (mặc định tắt), và tự chọn kiểu spam nào được tính:
+
+| Kiểu | Bị tính là spam khi | Mặc định |
+|---|---|---|
+| Gửi dồn dập | một thành viên gửi đủ N tin (loại nào cũng tính) trong T giây | bật, 5 tin trong 10 giây |
+| Lặp nội dung | cùng một đoạn chữ được gửi đủ N lần trong T giây | bật, 3 lần trong 60 giây |
+| Số điện thoại, số tài khoản | tin có số di động Việt Nam, hoặc dãy số đi kèm chữ như `stk`, `số tài khoản` | tắt |
+
+- Lặp nội dung không phân biệt hoa thường hay khoảng trắng thừa, và bỏ qua đoạn chữ ngắn hơn 10 ký tự (`ok`, `haha`) để không bắt nhầm câu trả lời thường ngày.
+- Số điện thoại được nhận ra dù viết cách bằng dấu cách, chấm hay gạch (`0912 345 678`, `+84.912.345.678`). Kiểu này tắt sẵn vì thành viên cũng hay gửi số điện thoại cho việc bình thường.
+- N từ 2 đến 50, T từ 1 giây đến 1 giờ. Quản trị viên nhóm được bỏ qua.
+- Tin làm vượt ngưỡng (và các tin tiếp theo khi vẫn còn vượt) bị xóa và ghi nhận là vi phạm loại `Spam`, kèm lý do. Các tin trước đó của đợt spam vẫn còn trong nhóm.
+- Nhiều ảnh gửi cùng một lần là một tin: Zalo tách album thành mỗi ảnh một tin, bot gộp lại theo mã album của Zalo, hoặc theo việc các ảnh đến liền nhau trong vòng 3 giây khi không có mã đó.
+- Bộ đếm nằm trong bộ nhớ của bot, nên bắt đầu lại từ đầu mỗi khi bot khởi động lại. Bot chỉ nhớ thời điểm gửi và một mã băm của mỗi tin (không giữ nội dung), và chỉ trong khoảng thời gian mà cài đặt của nhóm đang dùng.
+
 ## Bật bot theo nhóm
 
-Bot chỉ hoạt động ở những nhóm đã bật bot (công tắc ở cột `Trạng thái` của trang `/groups`, hoặc `Bật bot ở nhóm này` trên trang `/group/<id>`), mặc định tắt. Ở nhóm chưa bật, bot bỏ qua hoàn toàn: không kiểm tra tin nhắn, không ghi nhận, không xóa, không kick, và cũng không gọi Zalo để lấy thông tin nhóm. Các tính năng (`Chặn link`, `Lọc từ cấm`) là công tắc con, chỉ có tác dụng khi bot đang bật ở nhóm đó.
+Bot chỉ hoạt động ở những nhóm đã bật bot (công tắc ở cột `Trạng thái` của trang `/groups`, hoặc `Bật bot ở nhóm này` trên trang `/group/<id>`), mặc định tắt. Ở nhóm chưa bật, bot bỏ qua hoàn toàn: không kiểm tra tin nhắn, không ghi nhận, không xóa, không kick, và cũng không gọi Zalo để lấy thông tin nhóm. Các tính năng (`Chặn link`, `Lọc từ cấm`, `Chống spam`) là công tắc con, chỉ có tác dụng khi bot đang bật ở nhóm đó.
 
 Nhóm lưu từ phiên bản trước, khi chưa có công tắc này, được chuyển đổi một lần lúc bot khởi động: nhóm nào đang bật chặn link hoặc lọc từ cấm thì bot được bật sẵn, các tính năng giữ nguyên.
 
 ## Xử lý vi phạm và thống kê
 
-Một tin là vi phạm khi nhóm đang bật bot và bật tính năng tương ứng (`Chặn link` hoặc `Lọc từ cấm`), người gửi không phải chủ nhóm/QTV, và nội dung khớp quy tắc đó. Với mỗi vi phạm, bot:
+Một tin là vi phạm khi nhóm đang bật bot và bật tính năng tương ứng (`Chặn link`, `Lọc từ cấm` hoặc `Chống spam`), người gửi không phải chủ nhóm/QTV, và nội dung khớp quy tắc đó. Với mỗi vi phạm, bot:
 
 1. Ghi nhận vào thống kê của nhóm.
 2. Xóa tin nhắn, nếu bot là QTV của nhóm.
@@ -145,10 +163,10 @@ Một tin là vi phạm khi nhóm đang bật bot và bật tính năng tương 
 
 Việc xóa tin không chờ cơ sở dữ liệu: nếu MongoDB lỗi, tin vẫn bị xóa, chỉ có phần ghi nhận và kick của tin đó bị bỏ qua (console in `[VIOLATION RECORD FAILED]`).
 
-Kick không phải cài đặt chung của nhóm mà thuộc về từng tính năng: trên trang của nhóm, mỗi thẻ tính năng (`Chặn link`, `Lọc từ cấm`) có công tắc `Kick khi vi phạm nhiều lần` riêng, mặc định tắt. Ví dụ có thể để chặn link kick còn lọc từ cấm thì chỉ xóa tin.
+Kick không phải cài đặt chung của nhóm mà thuộc về từng tính năng: trên trang của nhóm, mỗi thẻ tính năng (`Chặn link`, `Lọc từ cấm`, `Chống spam`) có công tắc `Kick khi vi phạm nhiều lần` riêng, mặc định tắt. Ví dụ có thể để chặn link kick còn lọc từ cấm thì chỉ xóa tin.
 
 - Công tắc kick của một tính năng chỉ bật được khi tính năng đó đang bật và bot là QTV của nhóm (máy chủ cũng từ chối nếu không); tắt thì lúc nào cũng được.
-- Khi bật, đặt ngưỡng dạng `kick khi đủ N lần trong T`. Mặc định `Chặn link` là 3 lần trong 10 giây (bắt spam dồn dập), `Lọc từ cấm` là 3 lần trong 10 phút. `N` từ 1 đến 100, khoảng thời gian từ 1 giây đến 7 ngày.
+- Khi bật, đặt ngưỡng dạng `kick khi đủ N lần trong T`. Mặc định `Chặn link` là 3 lần trong 10 giây (bắt spam dồn dập), `Lọc từ cấm` là 3 lần trong 10 phút, `Chống spam` là 3 lần trong 60 giây. `N` từ 1 đến 100, khoảng thời gian từ 1 giây đến 7 ngày.
 - Hai quy tắc đếm riêng: 2 link và 1 từ cấm không cộng lại với nhau.
 - Chỉ các vi phạm nằm trong khoảng thời gian mới được tính; vi phạm cũ hơn không dẫn tới kick dù tổng số trong thống kê có lớn.
 - Sau khi bị kick, các vi phạm trước đó của thành viên không còn được tính cho lần kick sau. Nếu Zalo từ chối lệnh kick, bot thử lại ở vi phạm kế tiếp trong khoảng thời gian.

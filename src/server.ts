@@ -5,6 +5,7 @@ import { SimpleBot } from "./bot/simple-bot.js";
 import { parseConfig, type Config } from "./config.js";
 import { BadWordFilterFeature } from "./features/bad-word-filter.js";
 import { LinkGuardFeature } from "./features/link-guard.js";
+import { SpamGuardFeature } from "./features/spam-guard.js";
 import { BannedWords } from "./moderation/banned-words.js";
 import { BlockedLinks } from "./moderation/blocked-links.js";
 import { Store } from "./storage/store.js";
@@ -33,7 +34,7 @@ async function main(): Promise<void> {
   const blockedLinks = await BlockedLinks.load(store);
   const bannedWords = await BannedWords.load(store);
   const api = await login(store, config.credentialsKey);
-  const bot = new SimpleBot(api, store, api.getOwnId(), [new LinkGuardFeature(blockedLinks), new BadWordFilterFeature(bannedWords)]);
+  const bot = new SimpleBot(api, store, api.getOwnId(), [new LinkGuardFeature(blockedLinks), new BadWordFilterFeature(bannedWords), new SpamGuardFeature()]);
   await bot.start();
   const loginCodes = new LoginCodeService(createLoginCodeSender(bot, config));
   const app = createAdminApp(bot, store, loginCodes, blockedLinks, bannedWords);

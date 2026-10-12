@@ -12,12 +12,13 @@ import { Badge, Button, Card, CardHeader, ErrorNote, Input, PageHeader } from ".
 const tabs = [
   { value: "links", label: "Chặn link" },
   { value: "words", label: "Lọc từ cấm" },
+  { value: "spam", label: "Chống spam" },
 ] as const;
 
 type Tab = (typeof tabs)[number]["value"];
 
 // How many groups currently use a feature. Switching it on or off for a group is done on that group's page.
-function useGroupCount(feature: "linkGuard" | "badWordFilter"): string {
+function useGroupCount(feature: "linkGuard" | "badWordFilter" | "spamGuard"): string {
   const { data: summary } = useSWR<GroupSummary>("/groups/summary");
   return summary === undefined ? "" : ` Đang bật ở ${summary[feature]} nhóm.`;
 }
@@ -122,6 +123,29 @@ function WordsTab() {
   );
 }
 
+function SpamTab() {
+  const usage = useGroupCount("spamGuard");
+  return (
+    <div className="grid items-start gap-4 lg:grid-cols-2">
+      <Card>
+        <CardHeader title="Tính năng này làm gì" description={<>Bắt spam theo cách thành viên gửi tin chứ không theo nội dung của một tin.{usage}</>} />
+        <ul className="list-disc space-y-2 px-5 py-4 pl-9 text-sm text-muted">
+          <li><span className="text-foreground">Gửi dồn dập</span>: một thành viên gửi quá nhiều tin trong vài giây (mặc định 5 tin trong 10 giây).</li>
+          <li><span className="text-foreground">Lặp nội dung</span>: cùng một đoạn chữ được gửi lại nhiều lần (mặc định 3 lần trong 60 giây). Câu trả lời ngắn như “ok” không bị tính.</li>
+          <li><span className="text-foreground">Số điện thoại, số tài khoản</span>: tắt sẵn, bật riêng cho nhóm nào cần.</li>
+          <li>Tin làm vượt ngưỡng bị xóa và ghi nhận; các tin trước đó của đợt spam vẫn còn trong nhóm.</li>
+        </ul>
+      </Card>
+      <Card>
+        <CardHeader title="Cài đặt ở đâu" />
+        <p className="px-5 py-4 text-sm text-muted">
+          Tính năng này không có danh sách dùng chung. Ngưỡng của từng kiểu spam, việc bật tắt và việc có kick hay không đều đặt riêng cho mỗi nhóm, trong thẻ “Chống spam” ở trang của nhóm đó.
+        </p>
+      </Card>
+    </div>
+  );
+}
+
 // The open tab is part of the URL, so each feature has its own link and Back moves between tabs.
 export function FeaturesView() {
   const router = useRouter();
@@ -152,7 +176,7 @@ export function FeaturesView() {
         ))}
       </div>
       <div role="tabpanel" id="feature-panel" aria-labelledby={`tab-${tab}`}>
-        {tab === "links" ? <LinksTab /> : <WordsTab />}
+        {tab === "links" ? <LinksTab /> : tab === "words" ? <WordsTab /> : <SpamTab />}
       </div>
     </>
   );

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ThreadType, type Message } from "zca-js";
-import { defaultKickRules, type KickRules, type StoredGroup } from "../types.js";
+import { defaultKickRules, defaultSpamSettings, type KickRules, type StoredGroup } from "../types.js";
 import { Enforcer, type EnforcerApi, type EnforcerStore } from "./enforcer.js";
 
 type Scenario = Readonly<{
@@ -58,6 +58,8 @@ function setup(scenario: Scenario = {}) {
     botEnabled: true,
     linkGuardEnabled: true,
     badWordFilterEnabled: true,
+    spamGuardEnabled: true,
+    spamSettings: defaultSpamSettings,
     kickRules: scenario.kickRules ?? defaultKickRules,
     updatedAt: 0,
   };
@@ -81,7 +83,11 @@ await test("deletes, records and logs the message, and never kicks while kicking
 });
 
 await test("kicking is off for every feature by default", () => {
-  assert.deepEqual(defaultKickRules, { link: { enabled: false, count: 3, windowSeconds: 10 }, badWord: { enabled: false, count: 3, windowSeconds: 600 } });
+  assert.deepEqual(defaultKickRules, {
+    link: { enabled: false, count: 3, windowSeconds: 10 },
+    badWord: { enabled: false, count: 3, windowSeconds: 600 },
+    spam: { enabled: false, count: 3, windowSeconds: 60 },
+  });
 });
 
 await test("a feature kicks with its own count and window, and only that feature", async () => {

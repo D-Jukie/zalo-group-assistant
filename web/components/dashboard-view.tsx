@@ -4,7 +4,7 @@ import Link from "next/link";
 import useSWR from "swr";
 import { errorText } from "@/lib/api";
 import { formatNumber } from "@/lib/format";
-import type { BotStatus, GroupSummary, Overview } from "@/lib/types";
+import { totalViolations, type BotStatus, type GroupSummary, type Overview } from "@/lib/types";
 import { BotStatusCard } from "./bot-status-card";
 import { Card, CardHeader, EmptyState, PageHeader, Skeleton, StatTile } from "./ui";
 import { GroupLink, ViolationItem } from "./violation-item";
@@ -17,9 +17,9 @@ function Tiles() {
   const pending = <Skeleton className="h-9 w-16" />;
   const today = overview?.series.at(-1);
   const yesterday = overview?.series.at(-2);
-  const todayTotal = today === undefined ? 0 : today.link + today.badWord;
-  const yesterdayTotal = yesterday === undefined ? 0 : yesterday.link + yesterday.badWord;
-  const period = overview?.series.reduce((sum, day) => sum + day.link + day.badWord, 0);
+  const todayTotal = today === undefined ? 0 : totalViolations(today);
+  const yesterdayTotal = yesterday === undefined ? 0 : totalViolations(yesterday);
+  const period = overview?.series.reduce((sum, day) => sum + totalViolations(day), 0);
 
   return (
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">

@@ -22,6 +22,7 @@
   /* Chart series, validated for this surface with the dataviz palette checker. */
   --series-1: #2a78d6;
   --series-2: #eb6834;
+  --series-3: #1baf7a;
   --grid: #ededed;
 }
 
@@ -47,6 +48,7 @@
     --danger-surface: #331414;
     --series-1: #3987e5;
     --series-2: #d95926;
+    --series-3: #199e70;
     --grid: #242424;
   }
 }
@@ -71,6 +73,7 @@
   --danger-surface: #331414;
   --series-1: #3987e5;
   --series-2: #d95926;
+  --series-3: #199e70;
   --grid: #242424;
 }
 
@@ -93,6 +96,7 @@
   --color-danger-surface: var(--danger-surface);
   --color-series-1: var(--series-1);
   --color-series-2: var(--series-2);
+  --color-series-3: var(--series-3);
   --color-grid: var(--grid);
   --font-sans: var(--font-geist-sans), system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;

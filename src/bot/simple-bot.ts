@@ -152,6 +152,8 @@ export class SimpleBot {
       botEnabled: group.botEnabled,
       linkGuardEnabled: group.linkGuardEnabled,
       badWordFilterEnabled: group.badWordFilterEnabled,
+      spamGuardEnabled: group.spamGuardEnabled,
+      spamSettings: group.spamSettings,
       kickRules: group.kickRules,
       botIsAdmin,
       updatedAt: group.updatedAt,
