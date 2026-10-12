@@ -57,7 +57,7 @@ Trang `/setting` không chứa cài đặt của bot. Những gì chọn ở đ�
 
 Dashboard đọc địa chỉ API của bot từ biến `BOT_API_URL` (mặc định `http://127.0.0.1:3400`). Nếu bot chạy ở `PORT` khác, tạo file `web/.env.local` theo mẫu `web/.env.example`.
 
-Danh sách nhóm lấy từ bản đã lưu trong MongoDB (đồng bộ lúc bot khởi động, khi Zalo báo thay đổi và khi bot xử lý tin của nhóm) để trang tải nhanh; nút `Đồng bộ từ Zalo` ở trang `/groups` lấy lại toàn bộ từ Zalo. Trang chi tiết một nhóm luôn kiểm tra quyền QTV của bot trực tiếp với Zalo.
+Dashboard chỉ hiện những nhóm tài khoản bot **đang ở trong**. Danh sách thành viên nhóm được hỏi trực tiếp từ Zalo (nhớ tạm 15 giây, và làm mới ngay khi Zalo báo có thay đổi về nhóm), nên nhóm bot đã rời hoặc bị xóa khỏi sẽ biến mất khỏi mọi trang; cài đặt đã lưu của nhóm đó vẫn nằm trong MongoDB và có hiệu lực lại nếu bot vào lại nhóm, nhưng không xem hay sửa được qua API khi bot không ở trong nhóm. Các hàng đang hiển thị ở trang `/groups` được đọc lại từ Zalo trong một request (tên, số thành viên, quyền QTV của bot); nếu Zalo không phản hồi thì dùng bản đã lưu. Nút `Đồng bộ từ Zalo` đọc lại toàn bộ nhóm.
 
 Giao diện mặc định theo sáng/tối của hệ điều hành; có thể chọn cố định ở trang `/setting`.
 

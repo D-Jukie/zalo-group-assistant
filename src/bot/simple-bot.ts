@@ -7,8 +7,15 @@ import { Enforcer } from "./enforcer.js";
 import type { BotFeature } from "./feature.js";
 import { RecentMessages } from "./recent-messages.js";
 
+const groupInfoTtlMs = 10_000;
+// How long the list of groups the account belongs to is trusted before Zalo is asked again.
+const membershipTtlMs = 15_000;
+// Zalo returns the details of several groups in one request; this many at a time.
+const groupInfoBatchSize = 50;
+
 export class SimpleBot {
   private readonly groupCache = new Map<string, Readonly<{ info: LiveGroupInfo; expiresAt: number }>>();
+  private membership: Readonly<{ ids: ReadonlySet<string>; expiresAt: number }> | undefined;
   private readonly recentMessages = new RecentMessages();
   private readonly startedAt = now();
   private profile: Readonly<{ displayName: string; avatar: string }> = { displayName: "", avatar: "" };
@@ -60,15 +67,23 @@ export class SimpleBot {
     return user.uid;
   }
 
+  // Re-reads from Zalo which groups the account is in and the details of every one of them.
   public async syncAllGroups(): Promise<void> {
-    const result = await this.api.getAllGroups();
-    for (const groupId of Object.keys(result.gridVerMap)) {
+    this.membership = undefined;
+    const groupIds = Array.from(await this.memberGroupIds());
+    for (let start = 0; start < groupIds.length; start += groupInfoBatchSize) {
       try {
-        await this.syncGroup(groupId);
+        await this.fetchGroups(groupIds.slice(start, start + groupInfoBatchSize));
       } catch {
-        // Ignore groups that are no longer available.
+        // One failed batch must not stop the rest; those groups keep their stored copy.
       }
     }
+  }
+
+  // Whether the account is in the group right now. Settings saved for a group it has since left
+  // stay in the database, but nothing may act on them.
+  public async isInGroup(groupId: string): Promise<boolean> {
+    return (await this.memberGroupIds()).has(groupId);
   }
 
   public async isBotAdminIn(groupId: string): Promise<boolean> {
@@ -76,17 +91,51 @@ export class SimpleBot {
     return info !== undefined && this.isBotAdmin(info);
   }
 
-  // Every group the account is in, as last synced from Zalo (at start-up, on group events and while moderating).
-  // Reading the stored copy keeps the dashboard fast; syncAllGroups refreshes it on demand.
+  // Every group the account is in right now. Which groups those are comes from Zalo, so a group
+  // the bot has left never shows up; their saved settings and names come from the stored copy,
+  // which refreshGroups brings up to date for the groups actually being looked at.
   public async listGroups(): Promise<AdminGroupView[]> {
-    const groups = await this.store.listGroups();
-    return groups
+    const memberIds = await this.memberGroupIds();
+    let stored = await this.store.listGroups();
+    const known = new Set(stored.map((group) => group.groupId));
+    const unknown = Array.from(memberIds).filter((groupId) => !known.has(groupId));
+    if (unknown.length > 0) {
+      // Groups joined since the last sync have no stored copy yet.
+      await this.fetchGroups(unknown);
+      stored = await this.store.listGroups();
+    }
+    return stored
+      .filter((group) => memberIds.has(group.groupId))
       .map((group) => this.toView(group, this.isGroupAdmin(group, this.ownId)))
       .sort((left, right) => Number(right.botIsAdmin) - Number(left.botIsAdmin) || left.name.localeCompare(right.name));
   }
 
-  // One group with its admin rights checked against Zalo right now.
+  // The given groups with details read from Zalo now (one request for all of them), in the same order.
+  // A group Zalo reports the account has left is dropped. If Zalo cannot be reached the stored copies are used.
+  public async refreshGroups(groupIds: readonly string[]): Promise<AdminGroupView[]> {
+    const stale = groupIds.filter((groupId) => (this.groupCache.get(groupId)?.expiresAt ?? 0) <= now());
+    let removed: ReadonlySet<string> = new Set();
+    try {
+      removed = await this.fetchGroups(stale);
+    } catch {
+      // Keep going with what is stored.
+    }
+    const views: AdminGroupView[] = [];
+    for (const groupId of groupIds) {
+      if (removed.has(groupId)) {
+        this.membership = undefined;
+        continue;
+      }
+      const group = await this.store.getGroup(groupId);
+      if (group === undefined) continue;
+      views.push(this.toView(group, this.isGroupAdmin(this.groupCache.get(groupId)?.info ?? group, this.ownId)));
+    }
+    return views;
+  }
+
+  // One group with its admin rights checked against Zalo right now; undefined once the bot has left it.
   public async getGroup(groupId: string): Promise<AdminGroupView | undefined> {
+    if (!await this.isInGroup(groupId)) return undefined;
     const info = await this.currentGroup(groupId);
     const group = await this.store.getGroup(groupId);
     if (group === undefined) return undefined;
@@ -114,8 +163,31 @@ export class SimpleBot {
     const info = response.gridInfoMap[groupId] as LiveGroupInfo | undefined;
     if (info === undefined) throw new Error(`Không tìm thấy thông tin nhóm ${groupId}`);
     await this.store.upsertGroup(info);
-    this.groupCache.set(groupId, { info, expiresAt: now() + 10_000 });
+    this.groupCache.set(groupId, { info, expiresAt: now() + groupInfoTtlMs });
     return info;
+  }
+
+  private async memberGroupIds(): Promise<ReadonlySet<string>> {
+    if (this.membership !== undefined && this.membership.expiresAt > now()) return this.membership.ids;
+    const result = await this.api.getAllGroups();
+    const ids = new Set(Object.keys(result.gridVerMap));
+    this.membership = { ids, expiresAt: now() + membershipTtlMs };
+    return ids;
+  }
+
+  // Reads the details of many groups in as few requests as possible and saves them.
+  // Returns the IDs Zalo says the account is no longer a member of.
+  private async fetchGroups(groupIds: readonly string[]): Promise<ReadonlySet<string>> {
+    const removed = new Set<string>();
+    for (let start = 0; start < groupIds.length; start += groupInfoBatchSize) {
+      const response = await this.api.getGroupInfo(groupIds.slice(start, start + groupInfoBatchSize));
+      for (const [groupId, info] of Object.entries(response.gridInfoMap)) {
+        await this.store.upsertGroup(info);
+        this.groupCache.set(groupId, { info, expiresAt: now() + groupInfoTtlMs });
+      }
+      for (const groupId of response.removedsGroup ?? []) removed.add(groupId);
+    }
+    return removed;
   }
 
   // The name and avatar are only for display, so the bot starts without them if Zalo refuses.
@@ -206,6 +278,8 @@ export class SimpleBot {
 
   private async handleGroupEvent(event: GroupEvent): Promise<void> {
     this.groupCache.delete(event.threadId);
+    // The event may be the account joining or leaving a group.
+    this.membership = undefined;
     const rawData: unknown = (event as { data?: unknown }).data;
     const data = isRecord(rawData) ? rawData : undefined;
     if (data !== undefined) await this.store.patchGroupEvent(event.threadId, data, event.type);

@@ -131,6 +131,20 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
 
   app.use("/api", authMiddleware(store));
 
+  // Every route under a group only works while the account is still in that group. Settings saved
+  // for a group it has left would otherwise be shown and changed as if they still did something.
+  app.param("groupId", async (_request, response, next, groupId: string) => {
+    try {
+      if (!await bot.isInGroup(groupId)) {
+        response.status(404).json({ error: "Bot không ở trong nhóm này" });
+        return;
+      }
+      next();
+    } catch (error: unknown) {
+      response.status(502).json({ error: `Không lấy được danh sách nhóm từ Zalo: ${errorMessage(error)}` });
+    }
+  });
+
   app.get("/api/status", (_request, response) => response.json(bot.status()));
   app.get("/api/overview", async (_request, response) => {
     const [series, recent] = await Promise.all([
@@ -156,14 +170,26 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
     const filter = groupFilters.find((item: GroupFilter) => item === request.query.filter) ?? "all";
     const page = Number(request.query.page);
     const pageSize = Number(request.query.pageSize);
-    response.json(searchGroups(await bot.listGroups(), {
-      text,
-      filter,
-      page: Number.isInteger(page) && page >= 1 ? page : 1,
-      pageSize: isIntegerBetween(pageSize, 1, maxGroupPageSize) ? pageSize : defaultGroupPageSize,
-    }));
+    try {
+      const found = searchGroups(await bot.listGroups(), {
+        text,
+        filter,
+        page: Number.isInteger(page) && page >= 1 ? page : 1,
+        pageSize: isIntegerBetween(pageSize, 1, maxGroupPageSize) ? pageSize : defaultGroupPageSize,
+      });
+      // The rows about to be shown are read from Zalo again, so names, member counts and the bot's rights are current.
+      response.json({ ...found, items: await bot.refreshGroups(found.items.map((group) => group.groupId)) });
+    } catch (error: unknown) {
+      response.status(502).json({ error: `Không lấy được danh sách nhóm từ Zalo: ${errorMessage(error)}` });
+    }
   });
-  app.get("/api/groups/summary", async (_request, response) => response.json(summarizeGroups(await bot.listGroups())));
+  app.get("/api/groups/summary", async (_request, response) => {
+    try {
+      response.json(summarizeGroups(await bot.listGroups()));
+    } catch (error: unknown) {
+      response.status(502).json({ error: `Không lấy được danh sách nhóm từ Zalo: ${errorMessage(error)}` });
+    }
+  });
   app.post("/api/groups/sync", async (_request, response) => {
     try {
       await bot.syncAllGroups();
