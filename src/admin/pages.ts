@@ -1,0 +1,13 @@
+export function loginHtml(): string {
+  return `<!doctype html>
+<html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Đăng nhập · Zalo Bot</title>
+<style>body{font-family:system-ui;min-height:100vh;display:grid;place-items:center;margin:0;background:#f4f6fa;color:#172033}.card{width:min(380px,calc(100% - 2rem));background:white;border:1px solid #dfe4ee;border-radius:14px;padding:1.4rem;box-sizing:border-box;box-shadow:0 10px 30px #17203312}h1{margin-top:0}label{display:block;margin:.8rem 0}.check{display:flex;gap:.5rem;align-items:center;font-size:.92rem}.check input{width:auto}input{width:100%;box-sizing:border-box;padding:.7rem;border:1px solid #cbd5e1;border-radius:8px;margin-top:.35rem}button{width:100%;padding:.7rem;border:0;border-radius:8px;background:#2563eb;color:white;font-weight:600;cursor:pointer}button:disabled{opacity:.6;cursor:default}button.secondary{background:#475467}[hidden]{display:none}.muted{color:#667085}.error{color:#b42318;min-height:1.3rem}</style></head>
+<body><main class="card"><h1>Đăng nhập quản trị</h1><p class="muted">Bot sẽ nhắn một mã đăng nhập tới tài khoản Zalo quản trị đã cấu hình. Mở Zalo của tài khoản đó, xem tin nhắn từ bot rồi nhập mã vào đây.</p><button id="send" type="button">Gửi mã đăng nhập</button><form id="login" hidden><label>Mã đăng nhập<input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="8" required></label><label class="check"><input name="remember" type="checkbox"> Ghi nhớ đăng nhập 30 ngày</label><button type="submit">Đăng nhập</button></form><p id="error" class="error"></p></main>
+<script>
+const form=document.querySelector('#login');const send=document.querySelector('#send');const error=document.querySelector('#error');
+async function post(url,data){const response=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(data)});const result=await response.json();if(!response.ok)throw new Error(result.error||'Yêu cầu thất bại');return result;}
+function show(exception){error.textContent=exception instanceof Error?exception.message:'Yêu cầu thất bại';}
+send.addEventListener('click',async()=>{error.textContent='';send.disabled=true;try{await post('/login/code',{});form.hidden=false;form.code.focus();send.textContent='Gửi lại mã';send.className='secondary';}catch(exception){show(exception);}finally{send.disabled=false;}});
+form.addEventListener('submit',async event=>{event.preventDefault();error.textContent='';try{await post('/login',{code:form.code.value,remember:form.remember.checked});window.location.href='/admin';}catch(exception){show(exception);}});
+</script></body></html>`;
+}
