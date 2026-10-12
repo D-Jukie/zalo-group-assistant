@@ -30,8 +30,9 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-// What happens after a feature finds a violation: delete the message, record it, and kick the sender
-// when they broke the same rule often enough within the group's time window.
+// What happens after a feature finds a violation: delete the message, record it, and, if that
+// feature has kicking switched on in the group, kick the sender once they broke its rule often
+// enough within its time window.
 export class Enforcer {
   private readonly kickInFlight = new Set<string>();
   private handledMessages = 0;
@@ -62,7 +63,7 @@ export class Enforcer {
       // so a slow or failing database never leaves the message in the group.
       if (botIsAdmin) deletion ??= this.deleteMessage(message, messageId);
       const kickRule = group.kickRules[rule];
-      const canKick = botIsAdmin && group.kickEnabled && kickRule.count > 0;
+      const canKick = botIsAdmin && kickRule.enabled;
       let recent: number | undefined;
       try {
         await this.store.recordViolation(groupId, userId, message.data.dName, rule);

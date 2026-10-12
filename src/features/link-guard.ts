@@ -9,16 +9,17 @@ export class LinkGuardFeature implements BotFeature {
   public constructor(private readonly blockedLinks: BlockedLinks) {}
 
   public async onGroupMessage(context: GroupMessageContext): Promise<void> {
-    if (!context.group.botEnabled || context.senderIsAdmin) return;
+    if (!context.group.linkGuardEnabled || context.senderIsAdmin) return;
     const content = context.message.data.content;
     const isPhoto = context.message.data.msgType === "chat.photo";
-    const link = this.findBlockedLink(content)
-      ?? (isPhoto ? await decodeBlockedLinkFromQr(content, (text) => this.findBlockedLink(text) !== undefined) : undefined);
+    const groupId = context.groupId;
+    const link = this.findBlockedLink(content, groupId)
+      ?? (isPhoto ? await decodeBlockedLinkFromQr(content, (text) => this.findBlockedLink(text, groupId) !== undefined) : undefined);
     if (link !== undefined) await context.reportViolation("link", link);
   }
 
-  // Zalo group invites are always blocked; the admin's own list is checked after them.
-  private findBlockedLink(content: unknown): string | undefined {
-    return findGroupLink(content) ?? this.blockedLinks.find(content);
+  // Zalo group invites are always blocked; the shared list and the group's own list are checked after them.
+  private findBlockedLink(content: unknown, groupId: string): string | undefined {
+    return findGroupLink(content) ?? this.blockedLinks.find(content, groupId);
   }
 }

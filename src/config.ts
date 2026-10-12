@@ -24,7 +24,7 @@ function parseCredentialsKey(): Buffer {
 export function parseConfig(): Config {
   return {
     host: process.env.HOST ?? "127.0.0.1",
-    port: Number(process.env.PORT ?? "3000"),
+    port: Number(process.env.PORT ?? "3400"),
     mongodbUri: process.env.MONGODB_URI ?? "mongodb://127.0.0.1:27017",
     mongodbDatabase: process.env.MONGODB_DATABASE ?? "zalo_bot",
     credentialsKey: parseCredentialsKey(),

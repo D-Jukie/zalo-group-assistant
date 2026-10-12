@@ -4,3 +4,8 @@ dist/
 coverage/
 qr.png
 *.log
+.next/
+next-env.d.ts
+*.tsbuildinfo
+web/.env*.local
+.claude/

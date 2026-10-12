@@ -33,40 +33,47 @@ function compileRule(value: string): CompiledRule {
   return { value, pattern: new RegExp(`${hostPattern}${pathPattern}\\S*`, "u") };
 }
 
-// The admin-managed list of extra websites whose links are removed, shared by the admin page and the link guard.
-export class BlockedLinks {
-  private rules: CompiledRule[];
+// The shared list is stored under the bare name; a group's own list under "<name>:<groupId>".
+function scopeName(groupId: string | undefined): string {
+  return groupId === undefined ? listName : `${listName}:${groupId}`;
+}
 
-  private constructor(private readonly store: Store, values: readonly string[]) {
-    this.rules = values.map(compileRule);
-  }
+// The admin-managed lists of extra websites whose links are blocked: one shared by every group,
+// plus an optional list of its own for each group. A group is checked against both.
+export class BlockedLinks {
+  private constructor(private readonly store: Store, private readonly rules: Map<string, CompiledRule[]>) {}
 
   public static async load(store: Store): Promise<BlockedLinks> {
-    return new BlockedLinks(store, await store.getList(listName));
+    const lists = await store.getListsByPrefix(listName);
+    return new BlockedLinks(store, new Map(Array.from(lists, ([name, values]) => [name, values.map(compileRule)])));
   }
 
-  public list(): string[] {
-    return this.rules.map((rule) => rule.value);
+  // The shared list, or one group's own list when a group is given.
+  public list(groupId?: string): string[] {
+    return (this.rules.get(scopeName(groupId)) ?? []).map((rule) => rule.value);
   }
 
-  public async add(input: string): Promise<string | undefined> {
+  public async add(input: string, groupId?: string): Promise<boolean> {
     const value = normalizeBlockedLink(input);
-    if (value === undefined) return undefined;
-    if (this.rules.some((rule) => rule.value === value)) return value;
-    if (this.rules.length >= maxRules) throw new Error(`Danh sách chỉ chứa tối đa ${maxRules} link`);
-    await this.replace([...this.list(), value].sort());
-    return value;
+    if (value === undefined) return false;
+    const current = this.list(groupId);
+    if (current.includes(value)) return true;
+    if (current.length >= maxRules) throw new Error(`Danh sách chỉ chứa tối đa ${maxRules} link`);
+    await this.replace(groupId, [...current, value].sort());
+    return true;
   }
 
-  public async remove(value: string): Promise<void> {
-    await this.replace(this.list().filter((item) => item !== value));
+  public async remove(value: string, groupId?: string): Promise<void> {
+    await this.replace(groupId, this.list(groupId).filter((item) => item !== value));
   }
 
-  public find(content: unknown): string | undefined {
-    if (this.rules.length === 0) return undefined;
+  // Looks for a link blocked by the shared list or, when a group is given, by that group's list.
+  public find(content: unknown, groupId?: string): string | undefined {
+    const rules = [...this.rules.get(listName) ?? [], ...(groupId === undefined ? [] : this.rules.get(scopeName(groupId)) ?? [])];
+    if (rules.length === 0) return undefined;
     return findInContent(content, (text) => {
       const normalized = normalizeLinkText(text).toLowerCase();
-      for (const rule of this.rules) {
+      for (const rule of rules) {
         const match = rule.pattern.exec(normalized);
         if (match !== null) return match[0];
       }
@@ -74,8 +81,8 @@ export class BlockedLinks {
     });
   }
 
-  private async replace(values: string[]): Promise<void> {
-    await this.store.setList(listName, values);
-    this.rules = values.map(compileRule);
+  private async replace(groupId: string | undefined, values: string[]): Promise<void> {
+    await this.store.setList(scopeName(groupId), values);
+    this.rules.set(scopeName(groupId), values.map(compileRule));
   }
 }

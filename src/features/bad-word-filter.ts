@@ -19,7 +19,7 @@ export class BadWordFilterFeature implements BotFeature {
   public async onGroupMessage(context: GroupMessageContext): Promise<void> {
     if (!context.group.badWordFilterEnabled || context.senderIsAdmin) return;
     for (const text of messageTexts(context.message.data.content)) {
-      const word = this.bannedWords.find(text);
+      const word = this.bannedWords.find(text, context.groupId);
       if (word !== undefined) {
         await context.reportViolation("badWord", word);
         return;

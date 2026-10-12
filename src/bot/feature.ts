@@ -18,6 +18,6 @@ export type GroupMessageContext = Readonly<{
 export interface BotFeature {
   // Shown in the log when the feature throws.
   readonly name: string;
-  // Called for every group message from another member; features run concurrently and check their own switches in context.group.
+  // Called for every message from another member in a group where the bot is switched on; features run concurrently and check their own switches in context.group.
   onGroupMessage?(context: GroupMessageContext): Promise<void>;
 }

@@ -8,16 +8,17 @@ export type ViolationRule = "link" | "badWord";
 
 export const violationRules: readonly ViolationRule[] = ["link", "badWord"];
 
-// A member is removed after `count` violations of one rule within `windowSeconds`; count 0 never kicks for that rule.
-export type KickRule = Readonly<{ count: number; windowSeconds: number }>;
+// Each feature decides for itself whether breaking its rule can get a member kicked: when enabled,
+// a member is removed after `count` violations of that rule within `windowSeconds`.
+export type KickRule = Readonly<{ enabled: boolean; count: number; windowSeconds: number }>;
 
 export type KickRules = Readonly<Record<ViolationRule, KickRule>>;
 
-// What applies once an admin switches kicking on for a group. Link spam comes in bursts, so its
-// window is short; insults are judged over a longer stretch.
+// Kicking is off for every feature until an admin turns it on. The numbers are the starting point
+// once they do: link spam comes in bursts, so its window is short; insults are judged over a longer stretch.
 export const defaultKickRules: KickRules = {
-  link: { count: 3, windowSeconds: 10 },
-  badWord: { count: 3, windowSeconds: 10 * 60 },
+  link: { enabled: false, count: 3, windowSeconds: 10 },
+  badWord: { enabled: false, count: 3, windowSeconds: 10 * 60 },
 };
 
 export type StoredGroup = Readonly<{
@@ -26,10 +27,10 @@ export type StoredGroup = Readonly<{
   creatorId: string;
   adminIds: readonly string[];
   memberCount: number | null;
+  // Master switch: while it is off the bot ignores the group completely, whatever the rules below say.
   botEnabled: boolean;
+  linkGuardEnabled: boolean;
   badWordFilterEnabled: boolean;
-  // Master switch for kicking; it can only be turned on while the bot is an admin of the group.
-  kickEnabled: boolean;
   kickRules: KickRules;
   updatedAt: number;
 }>;
@@ -41,8 +42,8 @@ export type AdminGroupView = Readonly<{
   adminIds: readonly string[];
   memberCount: number;
   botEnabled: boolean;
+  linkGuardEnabled: boolean;
   badWordFilterEnabled: boolean;
-  kickEnabled: boolean;
   kickRules: KickRules;
   // Without admin rights the bot cannot delete or kick, so it only records violations.
   botIsAdmin: boolean;
@@ -66,7 +67,7 @@ export type BotStatus = Readonly<{
 }>;
 
 // The per-group on/off switches.
-export type GroupSetting = "botEnabled" | "badWordFilterEnabled" | "kickEnabled";
+export type GroupSetting = "botEnabled" | "linkGuardEnabled" | "badWordFilterEnabled";
 
 export type ViolationMatch = Readonly<{ rule: ViolationRule; detail: string }>;
 
@@ -85,6 +86,12 @@ export type ViolationMessage = Readonly<{
   status: ViolationMessageStatus;
   at: number;
 }>;
+
+// A logged message together with the group it was sent in, for the cross-group activity feed.
+export type RecentViolation = ViolationMessage & Readonly<{ groupId: string; groupName: string }>;
+
+// Violating messages per calendar day (server time zone), split by rule.
+export type DailyViolations = Readonly<{ date: string } & Record<ViolationRule, number>>;
 
 // One member's all-time record in one group, for the statistics.
 export type MemberViolations = Readonly<{

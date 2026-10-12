@@ -1,8 +1,8 @@
 import { MongoClient, type Collection, type UpdateFilter } from "mongodb";
 import { GroupEventType, type GroupInfo } from "zca-js";
-import { defaultKickRules, violationRules, type GroupSetting, type JsonRecord, type KickRule, type KickRules, type MemberViolations, type StoredGroup, type ViolationMatch, type ViolationMessage, type ViolationMessageStatus, type ViolationRule } from "../types.js";
+import { defaultKickRules, violationRules, type DailyViolations, type GroupSetting, type JsonRecord, type KickRule, type KickRules, type MemberViolations, type RecentViolation, type StoredGroup, type ViolationMatch, type ViolationMessage, type ViolationMessageStatus, type ViolationRule } from "../types.js";
 import type { EncryptedSecret } from "./secret-box.js";
-import { asNumber, asString, isRecord, now, uniqueStrings } from "../utils.js";
+import { asNumber, asString, escapeRegExp, isRecord, now, uniqueStrings } from "../utils.js";
 
 type GroupDocument = {
   _id: string;
@@ -12,10 +12,13 @@ type GroupDocument = {
   memberCount: number | null;
   botEnabled: boolean;
   // The rest are missing on groups stored before those features existed.
+  linkGuardEnabled?: boolean;
   badWordFilterEnabled?: boolean;
+  // Rules saved before kicking became a per-feature setting have no `enabled` of their own.
+  kickRules?: Partial<Record<ViolationRule, Readonly<{ enabled?: boolean; count: number; windowSeconds: number }>>>;
+  // The two older ways of switching kicking on, only read so groups saved by older versions keep their behaviour:
+  // a group-wide switch that applied to every rule with a count above 0, and before that a fixed link-spam switch.
   kickEnabled?: boolean;
-  kickRules?: Partial<Record<ViolationRule, KickRule>>;
-  // Replaced by kickEnabled and kickRules.link; only read so groups saved by older versions keep kicking link spam.
   linkSpamKickEnabled?: boolean;
   updatedAt: number;
 };
@@ -44,7 +47,7 @@ type ViolationDocument = {
 };
 
 // What the old "kick after 3 links in 10 seconds" switch meant.
-const legacyLinkKickRule: KickRule = { count: 3, windowSeconds: 10 };
+const legacyLinkKickRule: KickRule = { enabled: true, count: 3, windowSeconds: 10 };
 
 type ViolationMessageDocument = {
   groupId: string;
@@ -94,9 +97,11 @@ export class Store {
     );
     // MongoDB removes expired sessions on its own.
     await store.sessions.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+    await store.splitLegacyBotSwitch();
     await store.violations.createIndex({ groupId: 1, userId: 1 }, { unique: true });
     await store.violationMessages.createIndex({ groupId: 1, messageId: 1 }, { unique: true });
     await store.violationMessages.createIndex({ groupId: 1, userId: 1, at: -1 });
+    await store.violationMessages.createIndex({ at: -1 });
     await store.violationMessages.createIndex({ createdAt: 1 }, { expireAfterSeconds: violationMessageRetentionDays * 24 * 60 * 60 });
     return store;
   }
@@ -110,6 +115,11 @@ export class Store {
     return document === null ? undefined : this.toGroup(document);
   }
 
+  public async listGroups(): Promise<StoredGroup[]> {
+    const documents = await this.groups.find({}).toArray();
+    return documents.map((document) => this.toGroup(document));
+  }
+
   public async upsertGroup(info: GroupInfo): Promise<void> {
     await this.groups.updateOne(
       { _id: info.groupId },
@@ -121,7 +131,7 @@ export class Store {
           memberCount: info.totalMember,
           updatedAt: now(),
         },
-        $setOnInsert: { botEnabled: false, badWordFilterEnabled: false, kickEnabled: false },
+        $setOnInsert: { botEnabled: false, linkGuardEnabled: false, badWordFilterEnabled: false },
       },
       { upsert: true },
     );
@@ -156,7 +166,7 @@ export class Store {
   public async setKickRule(groupId: string, rule: ViolationRule, kickRule: KickRule): Promise<StoredGroup | undefined> {
     const document = await this.groups.findOneAndUpdate(
       { _id: groupId },
-      { $set: { [`kickRules.${rule}`]: { count: kickRule.count, windowSeconds: kickRule.windowSeconds }, updatedAt: now() } },
+      { $set: { [`kickRules.${rule}`]: { enabled: kickRule.enabled, count: kickRule.count, windowSeconds: kickRule.windowSeconds }, updatedAt: now() } },
       { returnDocument: "after" },
     );
     return document === null ? undefined : this.toGroup(document);
@@ -226,17 +236,45 @@ export class Store {
   // The member's most recent violating messages, newest first.
   public async listViolationMessages(groupId: string, userId: string, limit = 50): Promise<ViolationMessage[]> {
     const documents = await this.violationMessages.find({ groupId, userId }).sort({ at: -1 }).limit(limit).toArray();
+    return documents.map((document) => this.toViolationMessage(document));
+  }
+
+  // The latest violating messages across every group, newest first.
+  // filter.before pages backwards through the log; filter.rule keeps only messages that broke that rule.
+  public async listRecentViolationMessages(limit: number, filter: Readonly<{ before?: number; rule?: ViolationRule }> = {}): Promise<RecentViolation[]> {
+    const query = {
+      ...(filter.before === undefined ? {} : { at: { $lt: filter.before } }),
+      ...(filter.rule === undefined ? {} : { "matches.rule": filter.rule }),
+    };
+    const documents = await this.violationMessages.find(query).sort({ at: -1 }).limit(limit).toArray();
+    const groupIds = Array.from(new Set(documents.map((document) => document.groupId)));
+    const groups = await this.groups.find({ _id: { $in: groupIds } }, { projection: { name: 1 } }).toArray();
+    const names = new Map(groups.map((group) => [group._id, group.name]));
     return documents.map((document) => ({
-      messageId: document.messageId,
-      userId: document.userId,
-      userName: document.userName,
-      matches: document.matches,
-      text: document.text,
-      link: document.link,
-      messageType: document.messageType,
-      status: document.status,
-      at: document.at,
+      ...this.toViolationMessage(document),
+      groupId: document.groupId,
+      groupName: names.get(document.groupId) ?? document.groupId,
     }));
+  }
+
+  // Violating messages per day for the last `days` days including today, oldest first, in the server's time zone.
+  public async violationSeries(days: number): Promise<DailyViolations[]> {
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const firstDay = new Date();
+    firstDay.setHours(0, 0, 0, 0);
+    firstDay.setDate(firstDay.getDate() - (days - 1));
+    const rows = await this.violationMessages.aggregate<{ _id: { day: string; rule: ViolationRule }; count: number }>([
+      { $match: { createdAt: { $gte: firstDay } } },
+      { $unwind: "$matches" },
+      { $group: { _id: { day: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt", timezone } }, rule: "$matches.rule" }, count: { $sum: 1 } } },
+    ]).toArray();
+    const counts = new Map(rows.map((row) => [`${row._id.day}:${row._id.rule}`, row.count]));
+    return Array.from({ length: days }, (_item, index) => {
+      const day = new Date(firstDay);
+      day.setDate(firstDay.getDate() + index);
+      const date = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
+      return { date, link: counts.get(`${date}:link`) ?? 0, badWord: counts.get(`${date}:badWord`) ?? 0 };
+    });
   }
 
   public async createSession(tokenHash: string, expiresAt: Date): Promise<void> {
@@ -267,8 +305,28 @@ export class Store {
     return document?.values ?? [];
   }
 
+  // Every list whose name starts with the prefix, such as a shared list together with its per-group variants.
+  public async getListsByPrefix(prefix: string): Promise<Map<string, string[]>> {
+    const documents = await this.settings.find({ _id: { $regex: `^${escapeRegExp(prefix)}` } }).toArray();
+    return new Map(documents.map((document) => [document._id, document.values]));
+  }
+
   public async setList(name: string, values: readonly string[]): Promise<void> {
     await this.settings.updateOne({ _id: name }, { $set: { values: [...values] } }, { upsert: true });
+  }
+
+  // Until the master switch existed, botEnabled meant "block links" and each rule worked on its own.
+  // Groups saved that way keep their behaviour: the link rule takes over the old value, and the
+  // master switch is on wherever any rule was on. Groups already converted are left alone.
+  private async splitLegacyBotSwitch(): Promise<void> {
+    await this.groups.updateMany({ linkGuardEnabled: { $exists: false } }, [
+      {
+        $set: {
+          linkGuardEnabled: { $eq: ["$botEnabled", true] },
+          botEnabled: { $or: [{ $eq: ["$botEnabled", true] }, { $eq: ["$badWordFilterEnabled", true] }] },
+        },
+      },
+    ]);
   }
 
   private async updateGroup(groupId: string, fields: Partial<GroupDocument>): Promise<StoredGroup | undefined> {
@@ -280,10 +338,31 @@ export class Store {
     return document === null ? undefined : this.toGroup(document);
   }
 
-  private toKickRules(document: GroupDocument): KickRules {
+  private toViolationMessage(document: ViolationMessageDocument): ViolationMessage {
     return {
-      link: document.kickRules?.link ?? (document.linkSpamKickEnabled === true ? legacyLinkKickRule : defaultKickRules.link),
-      badWord: document.kickRules?.badWord ?? defaultKickRules.badWord,
+      messageId: document.messageId,
+      userId: document.userId,
+      userName: document.userName,
+      matches: document.matches,
+      text: document.text,
+      link: document.link,
+      messageType: document.messageType,
+      status: document.status,
+      at: document.at,
+    };
+  }
+
+  private toKickRules(document: GroupDocument): KickRules {
+    const read = (rule: ViolationRule): KickRule | undefined => {
+      const stored = document.kickRules?.[rule];
+      if (stored === undefined) return undefined;
+      // A count of 0 used to mean "never kick"; such a rule becomes a disabled one with the default count.
+      if (stored.count < 1) return { ...defaultKickRules[rule], windowSeconds: stored.windowSeconds };
+      return { enabled: stored.enabled ?? document.kickEnabled === true, count: stored.count, windowSeconds: stored.windowSeconds };
+    };
+    return {
+      link: read("link") ?? (document.linkSpamKickEnabled === true ? legacyLinkKickRule : defaultKickRules.link),
+      badWord: read("badWord") ?? defaultKickRules.badWord,
     };
   }
 
@@ -307,8 +386,8 @@ export class Store {
       adminIds: document.adminIds,
       memberCount: document.memberCount,
       botEnabled: document.botEnabled,
+      linkGuardEnabled: document.linkGuardEnabled ?? false,
       badWordFilterEnabled: document.badWordFilterEnabled ?? false,
-      kickEnabled: document.kickEnabled ?? document.linkSpamKickEnabled === true,
       kickRules: this.toKickRules(document),
       updatedAt: document.updatedAt,
     };

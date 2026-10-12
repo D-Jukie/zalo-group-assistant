@@ -1,7 +1,7 @@
 import { ThreadType, type API, type GroupEvent, type Message } from "zca-js";
 import { writeLog } from "../logger.js";
 import type { Store } from "../storage/store.js";
-import { defaultKickRules, type AdminGroupView, type BotStatus, type LiveGroupInfo } from "../types.js";
+import type { AdminGroupView, BotStatus, LiveGroupInfo, StoredGroup } from "../types.js";
 import { isRecord, now } from "../utils.js";
 import { Enforcer } from "./enforcer.js";
 import type { BotFeature } from "./feature.js";
@@ -9,7 +9,6 @@ import { RecentMessages } from "./recent-messages.js";
 
 export class SimpleBot {
   private readonly groupCache = new Map<string, Readonly<{ info: LiveGroupInfo; expiresAt: number }>>();
-  private groupListInFlight: Promise<AdminGroupView[]> | undefined;
   private readonly recentMessages = new RecentMessages();
   private readonly startedAt = now();
   private profile: Readonly<{ displayName: string; avatar: string }> = { displayName: "", avatar: "" };
@@ -77,47 +76,37 @@ export class SimpleBot {
     return info !== undefined && this.isBotAdmin(info);
   }
 
-  // Every group the account is in; the bot only needs admin rights to delete and kick.
+  // Every group the account is in, as last synced from Zalo (at start-up, on group events and while moderating).
+  // Reading the stored copy keeps the dashboard fast; syncAllGroups refreshes it on demand.
   public async listGroups(): Promise<AdminGroupView[]> {
-    // The admin page polls this from every open tab; share one Zalo round trip between overlapping requests.
-    this.groupListInFlight ??= this.loadGroups().finally(() => {
-      this.groupListInFlight = undefined;
-    });
-    return this.groupListInFlight;
+    const groups = await this.store.listGroups();
+    return groups
+      .map((group) => this.toView(group, this.isGroupAdmin(group, this.ownId)))
+      .sort((left, right) => Number(right.botIsAdmin) - Number(left.botIsAdmin) || left.name.localeCompare(right.name));
   }
 
-  private async loadGroups(): Promise<AdminGroupView[]> {
-    const result = await this.api.getAllGroups();
-    const groups: AdminGroupView[] = [];
-    for (const groupId of Object.keys(result.gridVerMap)) {
-      try {
-        const cached = this.groupCache.get(groupId);
-        let info = cached !== undefined && cached.expiresAt > now() ? cached.info : undefined;
-        if (info === undefined) {
-          const response = await this.api.getGroupInfo(groupId);
-          info = response.gridInfoMap[groupId];
-          if (info === undefined) continue;
-          this.groupCache.set(groupId, { info, expiresAt: now() + 10_000 });
-        }
-        const stored = await this.store.getGroup(groupId);
-        groups.push({
-          groupId: info.groupId,
-          name: info.name,
-          creatorId: info.creatorId,
-          adminIds: info.adminIds,
-          memberCount: info.totalMember,
-          botEnabled: stored?.botEnabled ?? false,
-          badWordFilterEnabled: stored?.badWordFilterEnabled ?? false,
-          kickEnabled: stored?.kickEnabled ?? false,
-          kickRules: stored?.kickRules ?? defaultKickRules,
-          botIsAdmin: this.isBotAdmin(info),
-          updatedAt: now(),
-        });
-      } catch {
-        // Ignore groups that are no longer available.
-      }
-    }
-    return groups.sort((left, right) => Number(right.botIsAdmin) - Number(left.botIsAdmin) || left.name.localeCompare(right.name));
+  // One group with its admin rights checked against Zalo right now.
+  public async getGroup(groupId: string): Promise<AdminGroupView | undefined> {
+    const info = await this.currentGroup(groupId);
+    const group = await this.store.getGroup(groupId);
+    if (group === undefined) return undefined;
+    return this.toView(group, this.isGroupAdmin(info ?? group, this.ownId));
+  }
+
+  private toView(group: StoredGroup, botIsAdmin: boolean): AdminGroupView {
+    return {
+      groupId: group.groupId,
+      name: group.name,
+      creatorId: group.creatorId,
+      adminIds: group.adminIds,
+      memberCount: group.memberCount ?? 0,
+      botEnabled: group.botEnabled,
+      linkGuardEnabled: group.linkGuardEnabled,
+      badWordFilterEnabled: group.badWordFilterEnabled,
+      kickRules: group.kickRules,
+      botIsAdmin,
+      updatedAt: group.updatedAt,
+    };
   }
 
   public async syncGroup(groupId: string): Promise<LiveGroupInfo> {
@@ -155,7 +144,7 @@ export class SimpleBot {
     }
   }
 
-  private isGroupAdmin(info: LiveGroupInfo, userId: string): boolean {
+  private isGroupAdmin(info: Readonly<{ creatorId: string; adminIds: readonly string[] }>, userId: string): boolean {
     return info.creatorId === userId || info.adminIds.some((adminId) => adminId === userId);
   }
 
@@ -168,14 +157,14 @@ export class SimpleBot {
     const groupId = message.threadId;
     const userId = message.data.uidFrom;
     if (this.recentMessages.isDuplicate(groupId, message.data.msgId || message.data.cliMsgId)) return;
-    this.groupMessagesSeen += 1;
     let group = await this.store.getGroup(groupId);
-    // Nothing to do in a group with every rule switched off, so skip the Zalo lookup.
-    if (group !== undefined && !group.botEnabled && !group.badWordFilterEnabled) return;
+    // A group the bot has not been switched on for is ignored entirely: nothing is checked, counted or recorded.
+    if (group !== undefined && !group.botEnabled) return;
     const info = await this.currentGroup(groupId);
     if (info === undefined) return;
     group ??= await this.store.getGroup(groupId);
-    if (group === undefined) return;
+    if (group === undefined || !group.botEnabled) return;
+    this.groupMessagesSeen += 1;
     const botIsAdmin = this.isBotAdmin(info);
     const context = {
       message,

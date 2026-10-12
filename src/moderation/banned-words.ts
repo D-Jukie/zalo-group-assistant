@@ -58,46 +58,58 @@ export function createBannedWordMatcher(words: readonly string[]): BannedWordMat
   };
 }
 
-// The admin-managed list of banned words and phrases, shared by the admin page and the filter.
+// The shared list is stored under the bare name; a group's own list under "<name>:<groupId>".
+function scopeName(groupId: string | undefined): string {
+  return groupId === undefined ? listName : `${listName}:${groupId}`;
+}
+
+type WordList = Readonly<{ words: readonly string[]; matcher: BannedWordMatcher }>;
+
+function toWordList(words: readonly string[]): WordList {
+  return { words, matcher: createBannedWordMatcher(words) };
+}
+
+// The admin-managed banned words and phrases: one list shared by every group, plus an optional list
+// of its own for each group. A group's messages are checked against both.
 export class BannedWords {
-  private matcher: BannedWordMatcher;
   // Changes run one at a time so two admin requests cannot overwrite each other.
   private pending: Promise<unknown> = Promise.resolve();
 
-  private constructor(private readonly store: Store, private words: readonly string[]) {
-    this.matcher = createBannedWordMatcher(words);
-  }
+  private constructor(private readonly store: Store, private readonly lists: Map<string, WordList>) {}
 
   public static async load(store: Store): Promise<BannedWords> {
-    return new BannedWords(store, await store.getList(listName));
+    const lists = await store.getListsByPrefix(listName);
+    return new BannedWords(store, new Map(Array.from(lists, ([name, words]) => [name, toWordList(words)])));
   }
 
-  public list(): readonly string[] {
-    return this.words;
+  // The shared list, or one group's own list when a group is given.
+  public list(groupId?: string): readonly string[] {
+    return this.lists.get(scopeName(groupId))?.words ?? [];
   }
 
-  public async add(input: string): Promise<boolean> {
+  public async add(input: string, groupId?: string): Promise<boolean> {
     const word = normalizeBannedWord(input);
     if (word === undefined) return false;
-    await this.change((words) => words.includes(word) ? words : [...words, word]);
+    await this.change(groupId, (words) => words.includes(word) ? words : [...words, word]);
     return true;
   }
 
-  public async remove(word: string): Promise<void> {
-    await this.change((words) => words.filter((item) => item !== word));
+  public async remove(word: string, groupId?: string): Promise<void> {
+    await this.change(groupId, (words) => words.filter((item) => item !== word));
   }
 
-  public find(text: string): string | undefined {
-    return this.matcher(text);
+  // Looks for a word banned by the shared list or, when a group is given, by that group's list.
+  public find(text: string, groupId?: string): string | undefined {
+    return this.lists.get(listName)?.matcher(text)
+      ?? (groupId === undefined ? undefined : this.lists.get(scopeName(groupId))?.matcher(text));
   }
 
-  private async change(update: (words: readonly string[]) => readonly string[]): Promise<void> {
+  private async change(groupId: string | undefined, update: (words: readonly string[]) => readonly string[]): Promise<void> {
     const run = this.pending.then(async () => {
-      const words = [...update(this.words)].sort();
+      const words = [...update(this.list(groupId))].sort();
       if (words.length > maxWords) throw new Error(`Danh sách chỉ chứa tối đa ${maxWords} từ`);
-      await this.store.setList(listName, words);
-      this.words = words;
-      this.matcher = createBannedWordMatcher(words);
+      await this.store.setList(scopeName(groupId), words);
+      this.lists.set(scopeName(groupId), toWordList(words));
     });
     this.pending = run.catch(() => undefined);
     await run;
