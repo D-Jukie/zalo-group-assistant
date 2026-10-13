@@ -228,3 +228,27 @@ export type ReminderCreateResult = { groupId: string; groupName: string; ok: boo
 export type ReminderMember = { userId: string; name: string };
 
 export type ReminderResponses = { accepted: ReminderMember[]; rejected: ReminderMember[] };
+
+// The history of what the bot did by itself and what admins did from the dashboard.
+export const activityCategories = ["moderation", "approval", "replies", "messages", "settings", "system"] as const;
+export type ActivityCategory = (typeof activityCategories)[number];
+export const activityActors = ["bot", "admin"] as const;
+export type ActivityActor = (typeof activityActors)[number];
+
+export type ActivityEntry = {
+  id: string;
+  at: number;
+  category: ActivityCategory;
+  actor: ActivityActor;
+  // What was done, in a few words, with what it was done to in `detail`.
+  title: string;
+  detail: string;
+  ok: boolean;
+  // Why it did not work; empty when it did.
+  error: string;
+  // Empty when the entry is not about one group or one member.
+  groupId: string;
+  groupName: string;
+  userId: string;
+  userName: string;
+};

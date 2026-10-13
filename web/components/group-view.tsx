@@ -523,7 +523,11 @@ function GroupPage({ group, backLink, onChange }: { group: Group; backLink: Reac
       <header className="flex flex-wrap items-start justify-between gap-4 pb-6">
         <div className="min-w-0 flex-1 basis-80">
           <h1 className="truncate text-2xl font-semibold tracking-tight" title={group.name || group.groupId}>{group.name || group.groupId}</h1>
-          <p className="mt-1 text-sm text-muted">ID <span className="font-mono" translate="no">{group.groupId}</span></p>
+          <p className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-muted">
+            <span>ID <span className="font-mono" translate="no">{group.groupId}</span></span>
+            <span aria-hidden="true" className="text-subtle">·</span>
+            <Link href={`/activity?groupId=${encodeURIComponent(group.groupId)}`} className="hover:text-foreground hover:underline">Lịch sử hoạt động</Link>
+          </p>
         </div>
         <BotSwitch group={group} onChange={onChange} />
       </header>
