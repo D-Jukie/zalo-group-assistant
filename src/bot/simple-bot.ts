@@ -1,7 +1,7 @@
 import { ThreadType, type API, type GroupEvent, type Message } from "zca-js";
 import { writeLog } from "../logger.js";
 import type { Store } from "../storage/store.js";
-import type { AdminGroupView, BotStatus, LiveGroupInfo, StoredGroup } from "../types.js";
+import type { AdminGroupView, BotStatus, LiveGroupInfo, MemberProfile, StoredGroup } from "../types.js";
 import { isRecord, now } from "../utils.js";
 import { Enforcer } from "./enforcer.js";
 import type { BotFeature } from "./feature.js";
@@ -12,10 +12,15 @@ const groupInfoTtlMs = 10_000;
 const membershipTtlMs = 15_000;
 // Zalo returns the details of several groups in one request; this many at a time.
 const groupInfoBatchSize = 50;
+// A group's member profiles are read again after this long.
+const memberTtlMs = 5 * 60 * 1000;
+// Zalo returns the profiles of several accounts in one request; this many at a time.
+const profileBatchSize = 100;
 
 export class SimpleBot {
   private readonly groupCache = new Map<string, Readonly<{ info: LiveGroupInfo; expiresAt: number }>>();
   private membership: Readonly<{ ids: ReadonlySet<string>; expiresAt: number }> | undefined;
+  private readonly memberCache = new Map<string, Readonly<{ members: readonly MemberProfile[]; complete: boolean; expiresAt: number }>>();
   private readonly recentMessages = new RecentMessages();
   private readonly startedAt = now();
   private profile: Readonly<{ displayName: string; avatar: string }> = { displayName: "", avatar: "" };
@@ -84,6 +89,33 @@ export class SimpleBot {
   // stay in the database, but nothing may act on them.
   public async isInGroup(groupId: string): Promise<boolean> {
     return (await this.memberGroupIds()).has(groupId);
+  }
+
+  // Everyone in a group with their name, picture and the date their Zalo account was created.
+  // `complete` is false when Zalo only handed over part of a large group's member list.
+  // The profiles are remembered for a few minutes; `refresh` reads them again.
+  public async listMembers(groupId: string, refresh = false): Promise<Readonly<{ members: readonly MemberProfile[]; complete: boolean }>> {
+    const cached = this.memberCache.get(groupId);
+    if (!refresh && cached !== undefined && cached.expiresAt > now()) return cached;
+    const info = await this.syncGroup(groupId);
+    // Zalo lists members as "<id>_<version>".
+    // Either list may be missing from what Zalo sends, whatever the declared type says.
+    const listed: readonly string[] = info.memVerList ?? (Array.isArray(info.memberIds) ? info.memberIds : []);
+    const memberIds = Array.from(new Set(listed.map((item) => item.split("_")[0] ?? "").filter((id) => id !== "")));
+    const profiles = new Map<string, MemberProfile>();
+    for (let start = 0; start < memberIds.length; start += profileBatchSize) {
+      const response = await this.api.getUserInfo(memberIds.slice(start, start + profileBatchSize));
+      for (const profile of Object.values(response.changed_profiles)) {
+        // Zalo gives the creation time in seconds.
+        const created = typeof profile.createdTs === "number" && profile.createdTs > 0 ? profile.createdTs * 1000 : null;
+        profiles.set(profile.userId, { userId: profile.userId, name: profile.displayName || profile.zaloName, avatar: profile.avatar, accountCreatedAt: created });
+      }
+    }
+    // A member Zalo returned no profile for is still a member.
+    const members = memberIds.map((userId) => profiles.get(userId) ?? { userId, name: "", avatar: "", accountCreatedAt: null });
+    const result = { members, complete: memberIds.length >= info.totalMember, expiresAt: now() + memberTtlMs };
+    this.memberCache.set(groupId, result);
+    return result;
   }
 
   // Takes the account out of a group. The group's owner cannot simply walk away: ownership has to be
@@ -290,6 +322,8 @@ export class SimpleBot {
 
   private async handleGroupEvent(event: GroupEvent): Promise<void> {
     this.groupCache.delete(event.threadId);
+    // Someone may have joined or left.
+    this.memberCache.delete(event.threadId);
     // The event may be the account joining or leaving a group.
     this.membership = undefined;
     const rawData: unknown = (event as { data?: unknown }).data;

@@ -141,6 +141,24 @@ export type MemberViolations = Readonly<{
   lastAt: number;
 }>;
 
+// A member of a group as Zalo describes them, before the bot's own records are added.
+export type MemberProfile = Readonly<{
+  userId: string;
+  name: string;
+  avatar: string;
+  // When the Zalo account was created; null when Zalo does not say.
+  accountCreatedAt: number | null;
+}>;
+
+// A row of a group's member list.
+export type GroupMember = MemberProfile & Readonly<{
+  role: "owner" | "admin" | "member";
+  isBot: boolean;
+  // All-time violations in this group, and how often the bot removed them from it.
+  violations: number;
+  kicks: number;
+}>;
+
 export const reminderRepeats = ["none", "daily", "weekly", "monthly"] as const;
 
 export type ReminderRepeat = (typeof reminderRepeats)[number];

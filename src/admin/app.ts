@@ -5,10 +5,11 @@ import type { BlockedLinks } from "../moderation/blocked-links.js";
 import { parseMessageRequest, parseReminderMessageEdit, parseReminderRequest } from "../reminders/reminder.js";
 import type { ReminderBoard } from "../reminders/reminder-board.js";
 import type { Store } from "../storage/store.js";
-import { violationMessageStatuses, violationRules, type GroupSetting, type RateRule, type ViolationLogFilter, type ViolationRule } from "../types.js";
+import { violationMessageStatuses, violationRules, type GroupMember, type GroupSetting, type RateRule, type ViolationLogFilter, type ViolationRule } from "../types.js";
 import { maxSpamWindowSeconds } from "../moderation/spam-detector.js";
 import { isRecord, now } from "../utils.js";
 import { groupFilters, searchGroups, summarizeGroups, type GroupFilter } from "./group-search.js";
+import { memberSorts, searchMembers } from "./member-search.js";
 import type { LoginCodeService } from "./login-code.js";
 import { authMiddleware, endSession, isAuthenticated, startSession } from "./session.js";
 
@@ -334,6 +335,38 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
   });
   registerListRoutes(app, store, "/api/groups/:groupId/blocked-links", "link", blockedLinks, "Link không hợp lệ; hãy nhập dạng example.com hoặc example.com/duong-dan");
   registerListRoutes(app, store, "/api/groups/:groupId/banned-words", "word", bannedWords, "Từ không hợp lệ; hãy nhập từ hoặc cụm từ dài 2–50 ký tự");
+  // One page of the group's members with their Zalo account date and their record in this group.
+  // ?q= searches names and IDs, ?sort= is name, violations or newest, ?refresh=1 reads Zalo again.
+  app.get("/api/groups/:groupId/members", async (request, response) => {
+    const { groupId } = request.params;
+    const text = typeof request.query.q === "string" ? request.query.q.slice(0, maxSearchLength) : "";
+    const sort = memberSorts.find((item) => item === request.query.sort) ?? "name";
+    const page = Number(request.query.page);
+    const pageSize = Number(request.query.pageSize);
+    try {
+      const [{ members, complete }, group, records] = await Promise.all([bot.listMembers(groupId, request.query.refresh === "1"), bot.getGroup(groupId), store.listViolations(groupId)]);
+      const recordOf = new Map(records.map((record) => [record.userId, record]));
+      const rows = members.map((member): GroupMember => {
+        const record = recordOf.get(member.userId);
+        return {
+          ...member,
+          role: member.userId === group?.creatorId ? "owner" : group?.adminIds.includes(member.userId) === true ? "admin" : "member",
+          isBot: member.userId === bot.ownId,
+          violations: record === undefined ? 0 : violationRules.reduce((sum, rule) => sum + record.counts[rule], 0),
+          kicks: record?.kicks ?? 0,
+        };
+      });
+      const found = searchMembers(rows, {
+        text,
+        sort,
+        page: Number.isInteger(page) && page >= 1 ? page : 1,
+        pageSize: isIntegerBetween(pageSize, 1, maxGroupPageSize) ? pageSize : defaultGroupPageSize,
+      });
+      response.json({ ...found, memberCount: rows.length, complete });
+    } catch (error: unknown) {
+      response.status(502).json({ error: `Không lấy được danh sách thành viên từ Zalo: ${errorMessage(error)}` });
+    }
+  });
   app.get("/api/groups/:groupId/violations", async (request, response) => {
     response.json(await store.listViolations(request.params.groupId));
   });
