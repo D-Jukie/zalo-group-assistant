@@ -11,6 +11,7 @@ import { ruleLabels, totalViolations, violationRules, type Group, type GroupTogg
 import { AutoReplyManager } from "./auto-replies-view";
 import { ConfirmDialog } from "./confirm-dialog";
 import { JoinApprovalCard, PendingMembers } from "./group-approvals";
+import { GroupCommands } from "./group-commands";
 import { GroupMembers } from "./group-members";
 import { ListManager } from "./list-manager";
 import { RowCheckbox, RowNumber, SelectAllCheckbox, SelectionBar, useSelection } from "./selection";
@@ -564,7 +565,10 @@ function GroupPage({ group, backLink, onChange }: { group: Group; backLink: Reac
         </div>
       ) : tab === "replies" ? (
         // Like the features, answers do nothing while the bot is off, but they can still be prepared.
-        <AutoReplyManager group={group} />
+        <div className="space-y-4">
+          <GroupCommands group={group} onChange={onChange} />
+          <div><AutoReplyManager group={group} /></div>
+        </div>
       ) : tab === "members" ? (
         <GroupMembers group={group} />
       ) : tab === "pending" ? (

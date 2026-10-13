@@ -34,6 +34,12 @@ export type JoinReview = { userId: string; userName: string; decision: "approved
 
 export type JoinReviewResult = { userId: string; name: string; ok: boolean; error?: string };
 
+// The commands the bot knows by itself, switched per group. "/random" picks members or a number.
+export type GroupCommandSettings = { random: { enabled: boolean; adminOnly: boolean } };
+
+// One group's row on the page that sets the bot's own commands. Only groups with the bot on are listed.
+export type GroupCommandRow = { groupId: string; name: string; memberCount: number; commands: GroupCommandSettings };
+
 export type Group = {
   groupId: string;
   name: string;
@@ -47,6 +53,7 @@ export type Group = {
   spamGuardEnabled: boolean;
   spamSettings: SpamSettings;
   joinApproval: JoinApprovalSettings;
+  commands: GroupCommandSettings;
   kickRules: Record<ViolationRule, KickRule>;
   botIsAdmin: boolean;
   updatedAt: number;
