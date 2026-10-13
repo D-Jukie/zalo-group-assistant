@@ -51,7 +51,7 @@ Dashboard là ứng dụng Next.js (App Router, Tailwind CSS, SWR) trong `web/`.
 | `/groups` | Danh sách nhóm, có công tắc bật tắt bot cho từng nhóm, tìm kiếm, bộ lọc và phân trang (lưu trên URL). Bot thực hiện việc tìm, lọc và chia trang; ô tìm chờ 250ms sau khi ngừng gõ rồi mới gửi yêu cầu, và tìm được theo tên không dấu, hoặc theo ID nhóm khi gõ từ 6 chữ số trở lên |
 | `/group/<id>` | Bật bot cho nhóm, từng tính năng kèm cài đặt kick riêng của nó, link bị chặn và từ cấm riêng, thống kê vi phạm theo thành viên, tin vi phạm đã lưu |
 | `/features` | Cài đặt dùng chung của từng tính năng (Chặn link, Lọc từ cấm, Chống spam): danh sách link và từ cấm chung, ô thử một câu, mô tả chống spam |
-| `/violations` | Nhật ký vi phạm trên mọi nhóm, lọc theo quy tắc, tải thêm tin cũ hơn |
+| `/violations` | Nhật ký vi phạm trên mọi nhóm: tìm theo tên thành viên, nội dung tin, link hoặc tên nhóm; lọc theo quy tắc, kết quả xử lý và khoảng ngày giờ; tải thêm tin cũ hơn |
 | `/reminders` | Lịch nhắc hẹn của Zalo ở mọi nhóm đang bật bot: nội dung, giờ bắt đầu, số người tham gia và từ chối, danh sách thành viên đã trả lời |
 | `/reminders/new` | Tạo một nhắc hẹn cho một hoặc nhiều nhóm cùng lúc |
 | `/broadcast` | Gửi tin nhắn hàng loạt: một tin của bot cho một hoặc nhiều nhóm, gửi ngay hoặc hẹn giờ |
@@ -64,6 +64,14 @@ Dashboard đọc địa chỉ API của bot từ biến `BOT_API_URL` (mặc đ�
 Dashboard chỉ hiện những nhóm tài khoản bot **đang ở trong**. Danh sách thành viên nhóm được hỏi trực tiếp từ Zalo (nhớ tạm 15 giây, và làm mới ngay khi Zalo báo có thay đổi về nhóm), nên nhóm bot đã rời hoặc bị xóa khỏi sẽ biến mất khỏi mọi trang; cài đặt đã lưu của nhóm đó vẫn nằm trong MongoDB và có hiệu lực lại nếu bot vào lại nhóm, nhưng không xem hay sửa được qua API khi bot không ở trong nhóm. Các hàng đang hiển thị ở trang `/groups` được đọc lại từ Zalo trong một request (tên, số thành viên, quyền QTV của bot); nếu Zalo không phản hồi thì dùng bản đã lưu. Nút `Đồng bộ từ Zalo` đọc lại toàn bộ nhóm.
 
 Giao diện mặc định theo sáng/tối của hệ điều hành; có thể chọn cố định ở trang `/setting`.
+
+### Tìm trong nhật ký vi phạm
+
+Trang `/violations` tìm và lọc ngay trên bot, nên kết quả tính trên toàn bộ nhật ký chứ không chỉ những tin đã tải về:
+
+- **Ô tìm kiếm** tìm trong tên và ID thành viên, nội dung tin, link, phần bị bắt (từ cấm, link, lý do spam) và tên nhóm. Gõ không dấu tìm được cả chữ có dấu (`nguyen` ra `Nguyễn`, `Nguyên`); gõ có dấu thì chỉ ra đúng dấu đó. Không phân biệt hoa thường. Ô tìm chờ 250ms sau khi ngừng gõ rồi mới gửi yêu cầu.
+- **Bộ lọc:** quy tắc (`Link`, `Từ cấm`, `Spam`), kết quả xử lý (`Đã xóa`, `Xóa thất bại`, `Chỉ ghi nhận`), và khoảng thời gian `Từ lúc` – `Đến lúc` theo ngày giờ. Khi chưa chọn gì, hai ô này được điền sẵn 30 ngày gần nhất tính tới hiện tại; xóa trống một ô để bỏ giới hạn ở đầu đó (ví dụ xóa `Từ lúc` để xem cả tin cũ hơn 30 ngày).
+- Các điều kiện kết hợp với nhau, đều nằm trên địa chỉ trang (lưu, chia sẻ và bấm Back được), và có nút `Về mặc định`. Góc phải ghi số tin khớp.
 
 ### Chọn nhiều và thao tác một lần
 
