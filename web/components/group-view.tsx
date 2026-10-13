@@ -7,7 +7,8 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import useSWR, { useSWRConfig } from "swr";
 import { ApiError, errorText, send } from "@/lib/api";
 import { cn, formatDateTime, formatNumber, splitWindow, windowUnits } from "@/lib/format";
-import { ruleLabels, totalViolations, violationRules, type Group, type GroupToggle, type KickRule, type MemberViolations, type RateRule, type SpamSettings, type PendingJoinList, type ViolationMessage, type ViolationRule } from "@/lib/types";
+import { ruleLabels, totalViolations, violationRules, type Group, type GroupToggle, type KickRule, type MemberViolations, type RateRule, type SpamSettings, type AutoReplyRule, type PendingJoinList, type ViolationMessage, type ViolationRule } from "@/lib/types";
+import { AutoReplyManager } from "./auto-replies-view";
 import { ConfirmDialog } from "./confirm-dialog";
 import { JoinApprovalCard, PendingMembers } from "./group-approvals";
 import { GroupMembers } from "./group-members";
@@ -474,6 +475,7 @@ export function GroupView({ groupId }: { groupId: string }) {
 
 const tabs = [
   { value: "features", label: "Tính năng" },
+  { value: "replies", label: "Trả lời tự động" },
   { value: "members", label: "Thành viên" },
   { value: "pending", label: "Chờ duyệt" },
   { value: "violations", label: "Vi phạm" },
@@ -489,6 +491,8 @@ function GroupPage({ group, backLink, onChange }: { group: Group; backLink: Reac
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { data: records } = useSWR<MemberViolations[]>(`/groups/${encodeURIComponent(group.groupId)}/violations`);
+  const { data: replies } = useSWR<AutoReplyRule[]>("/auto-replies");
+  const ownReplies = replies?.filter((rule) => rule.groupIds.includes(group.groupId)).length ?? 0;
   // Only an admin account can read the waiting list.
   const { data: waiting } = useSWR<PendingJoinList>(group.botIsAdmin ? `/groups/${encodeURIComponent(group.groupId)}/pending-members` : null);
   // A link to a member's messages opens the violations tab, whether or not it names the tab.
@@ -546,6 +550,7 @@ function GroupPage({ group, backLink, onChange }: { group: Group; backLink: Reac
             )}
           >
             {item.label}
+            {item.value === "replies" && ownReplies > 0 ? <span className="ml-1.5 tabular-nums text-muted">{formatNumber(ownReplies)}</span> : null}
             {item.value === "members" ? <span className="ml-1.5 tabular-nums text-muted">{formatNumber(group.memberCount)}</span> : null}
             {item.value === "pending" && waiting !== undefined && waiting.items.length > 0 ? <span className="ml-1.5 tabular-nums text-muted">{formatNumber(waiting.items.length)}</span> : null}
             {item.value === "violations" && records !== undefined && records.length > 0 ? <span className="ml-1.5 tabular-nums text-muted">{formatNumber(records.length)}</span> : null}
@@ -557,6 +562,9 @@ function GroupPage({ group, backLink, onChange }: { group: Group; backLink: Reac
         <div inert={!group.botEnabled} className={group.botEnabled ? undefined : "opacity-50"}>
           <FeatureCards group={group} onChange={onChange} />
         </div>
+      ) : tab === "replies" ? (
+        // Like the features, answers do nothing while the bot is off, but they can still be prepared.
+        <AutoReplyManager group={group} />
       ) : tab === "members" ? (
         <GroupMembers group={group} />
       ) : tab === "pending" ? (

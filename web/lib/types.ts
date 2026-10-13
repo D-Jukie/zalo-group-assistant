@@ -187,6 +187,31 @@ export type MemberActionResult = { userId: string; ok: boolean; error?: string; 
 // Someone a group has blocked from joining again.
 export type BlockedMember = { userId: string; name: string; avatar: string };
 
+// What sets off an automatic answer: words a member types, or a command such as "/huongdan".
+export type AutoReplyKind = "keyword" | "command";
+
+// How a keyword is compared: the whole message, or whole words anywhere in it.
+export type AutoReplyMatch = "exact" | "contains";
+
+// An answer the bot gives by itself. The pictures are fetched separately.
+export type AutoReplyRule = {
+  id: string;
+  kind: AutoReplyKind;
+  match: AutoReplyMatch;
+  triggers: string[];
+  text: string;
+  imageCount: number;
+  // The groups it answers in; empty for every group the bot is switched on for.
+  groupIds: string[];
+  // The rule answers at most once in a group in this long.
+  cooldownSeconds: number;
+  enabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+  sentCount: number;
+  lastSentAt: number | null;
+};
+
 // What a bulk action did to one group.
 export type GroupActionResult = { groupId: string; groupName: string; ok: boolean; error?: string };
 

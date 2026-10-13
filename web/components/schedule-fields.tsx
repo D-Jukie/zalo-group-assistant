@@ -168,7 +168,7 @@ export function ScheduleFields({ schedule, dateLabel }: { schedule: Schedule; da
 }
 
 // The groups something goes to. The whole list is loaded, so searching happens right here.
-function GroupPicker({ groups, selected, onChange }: { groups: ReminderGroup[]; selected: ReadonlySet<string>; onChange: (selected: Set<string>) => void }) {
+export function GroupPicker({ groups, selected, onChange }: { groups: ReminderGroup[]; selected: ReadonlySet<string>; onChange: (selected: Set<string>) => void }) {
   const [search, setSearch] = useState("");
   const needle = foldText(search.trim());
   const visible = needle === "" ? groups : groups.filter((group) => foldText(group.name).includes(needle) || group.groupId.includes(needle));
