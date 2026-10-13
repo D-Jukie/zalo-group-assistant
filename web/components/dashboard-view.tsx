@@ -4,7 +4,7 @@ import Link from "next/link";
 import useSWR from "swr";
 import { errorText } from "@/lib/api";
 import { formatNumber } from "@/lib/format";
-import { totalViolations, type BotStatus, type GroupSummary, type Overview } from "@/lib/types";
+import { totalViolations, type GroupSummary, type Overview } from "@/lib/types";
 import { BotStatusCard } from "./bot-status-card";
 import { Card, CardHeader, EmptyState, PageHeader, Skeleton, StatTile } from "./ui";
 import { GroupLink, ViolationItem } from "./violation-item";
@@ -13,12 +13,9 @@ import { ViolationsChart } from "./violations-chart";
 function Tiles() {
   const { data: groups } = useSWR<GroupSummary>("/groups/summary");
   const { data: overview } = useSWR<Overview>("/overview");
-  const { data: status } = useSWR<BotStatus>("/status");
   const pending = <Skeleton className="h-9 w-16" />;
   const today = overview?.series.at(-1);
-  const yesterday = overview?.series.at(-2);
   const todayTotal = today === undefined ? 0 : totalViolations(today);
-  const yesterdayTotal = yesterday === undefined ? 0 : totalViolations(yesterday);
   const period = overview?.series.reduce((sum, day) => sum + totalViolations(day), 0);
 
   return (
@@ -26,22 +23,18 @@ function Tiles() {
       <StatTile
         label="Nhóm"
         value={groups ? formatNumber(groups.total) : pending}
-        hint={groups ? `Bot là trưởng nhóm ở ${formatNumber(groups.botAdmin)} nhóm` : undefined}
       />
       <StatTile
         label="Nhóm đang bật bot"
         value={groups ? formatNumber(groups.enabled) : pending}
-        hint={groups ? `${formatNumber(groups.kicking)} nhóm có tính năng đang kick` : undefined}
       />
       <StatTile
         label="Vi phạm hôm nay"
         value={overview ? formatNumber(todayTotal) : pending}
-        hint={overview ? `Hôm qua: ${formatNumber(yesterdayTotal)}` : undefined}
       />
       <StatTile
         label="Vi phạm 14 ngày"
         value={period === undefined ? pending : formatNumber(period)}
-        hint={status ? `${formatNumber(status.groupMessagesSeen)} tin nhóm đã nhận từ lúc khởi động` : undefined}
       />
     </div>
   );
