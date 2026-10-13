@@ -49,7 +49,7 @@ Dashboard là ứng dụng Next.js (App Router, Tailwind CSS, SWR) trong `web/`.
 | `/login` | Đăng nhập bằng mã gửi qua Zalo |
 | `/dashboard` | Thông tin bot, các con số tổng quan, biểu đồ vi phạm 14 ngày, 20 tin vi phạm gần nhất |
 | `/groups` | Danh sách nhóm, có công tắc bật tắt bot cho từng nhóm, tìm kiếm, bộ lọc và phân trang (lưu trên URL). Bot thực hiện việc tìm, lọc và chia trang; ô tìm chờ 250ms sau khi ngừng gõ rồi mới gửi yêu cầu, và tìm được theo tên không dấu, hoặc theo ID nhóm khi gõ từ 6 chữ số trở lên |
-| `/group/<id>` | Bật bot cho nhóm, từng tính năng kèm cài đặt kick riêng của nó, link bị chặn và từ cấm riêng, danh sách thành viên, thống kê vi phạm theo thành viên, tin vi phạm đã lưu |
+| `/group/<id>` | Công tắc bật bot và các con số của nhóm ở đầu trang, rồi ba tab: `Tính năng` (từng tính năng kèm danh sách riêng và cài đặt kick của nó), `Thành viên`, `Vi phạm` (thống kê theo thành viên và tin vi phạm đã lưu) |
 | `/features` | Cài đặt dùng chung của từng tính năng (Chặn link, Lọc từ cấm, Chống spam): danh sách link và từ cấm chung, ô thử một câu, mô tả chống spam |
 | `/violations` | Nhật ký vi phạm trên mọi nhóm: tìm theo tên thành viên, nội dung tin, link hoặc tên nhóm; lọc theo quy tắc, kết quả xử lý và khoảng ngày giờ; tải thêm tin cũ hơn |
 | `/reminders` | Lịch nhắc hẹn của Zalo ở mọi nhóm đang bật bot: nội dung, giờ bắt đầu, số người tham gia và từ chối, danh sách thành viên đã trả lời |
@@ -67,10 +67,10 @@ Giao diện mặc định theo sáng/tối của hệ điều hành; có thể c
 
 ### Danh sách thành viên của nhóm
 
-Trang `/group/<id>` có bảng `Danh sách thành viên`, đọc từ Zalo: số thứ tự, ảnh đại diện và tên (kèm nhãn `Trưởng nhóm`, `Phó nhóm`, `Bot`), ID, ngày tham gia Zalo và số lần vi phạm trong nhóm đó.
+Tab `Thành viên` của trang `/group/<id>` có bảng `Danh sách thành viên`, đọc từ Zalo: số thứ tự, ảnh đại diện và tên (kèm nhãn `Trưởng nhóm`, `Phó nhóm`, `Bot`), ID, ngày tham gia Zalo và số lần vi phạm trong nhóm đó.
 
 - **Ngày tham gia Zalo** là ngày tài khoản Zalo được tạo, kèm tuổi tài khoản (`34 ngày`, `7 tháng`, `5 năm`). Zalo không cho biết ngày một người vào nhóm, nên bảng không có cột đó.
-- **Số lần vi phạm** là tổng từ trước tới nay trong nhóm; bấm vào số để mở các tin vi phạm đã lưu của người đó. Nếu người đó từng bị bot kick thì số lần kick ghi bên cạnh.
+- **Số lần vi phạm** là tổng từ trước tới nay trong nhóm; bấm vào số để mở các tin vi phạm đã lưu của người đó ở tab `Vi phạm`. Nếu người đó từng bị bot kick thì số lần kick ghi bên cạnh.
 - Tìm theo tên (không dấu cũng được) hoặc một phần ID; sắp xếp theo tên, theo số vi phạm, hoặc theo tài khoản mới tạo nhất. Trưởng nhóm rồi tới các phó nhóm luôn đứng đầu bảng, cách sắp xếp chỉ áp dụng bên trong từng nhóm vai trò. Bot thực hiện việc tìm, sắp xếp và chia trang (20 dòng mỗi trang).
 - Bot nhớ hồ sơ thành viên của mỗi nhóm trong 5 phút và đọc lại khi nhóm có thay đổi; nút `Làm mới` đọc lại ngay. Nếu Zalo chỉ trả về một phần thành viên của nhóm lớn, bảng ghi rõ danh sách chưa đầy đủ.
 
@@ -208,7 +208,7 @@ Chỉ nhóm đang bật bot mới được đọc và chọn. Bot nhớ tạm b�
 
 ## Bật bot theo nhóm
 
-Bot chỉ hoạt động ở những nhóm đã bật bot (công tắc ở cột `Trạng thái` của trang `/groups`, hoặc `Bật bot ở nhóm này` trên trang `/group/<id>`), mặc định tắt. Ở nhóm chưa bật, bot bỏ qua hoàn toàn: không kiểm tra tin nhắn, không ghi nhận, không xóa, không kick, và cũng không gọi Zalo để lấy thông tin nhóm. Các tính năng (`Chặn link`, `Lọc từ cấm`, `Chống spam`) là công tắc con, chỉ có tác dụng khi bot đang bật ở nhóm đó.
+Bot chỉ hoạt động ở những nhóm đã bật bot (công tắc ở cột `Trạng thái` của trang `/groups`, hoặc công tắc ở góc trên của trang `/group/<id>`), mặc định tắt. Ở nhóm chưa bật, bot bỏ qua hoàn toàn: không kiểm tra tin nhắn, không ghi nhận, không xóa, không kick, và cũng không gọi Zalo để lấy thông tin nhóm. Các tính năng (`Chặn link`, `Lọc từ cấm`, `Chống spam`) là công tắc con, chỉ có tác dụng khi bot đang bật ở nhóm đó.
 
 Nhóm lưu từ phiên bản trước, khi chưa có công tắc này, được chuyển đổi một lần lúc bot khởi động: nhóm nào đang bật chặn link hoặc lọc từ cấm thì bot được bật sẵn, các tính năng giữ nguyên.
 
