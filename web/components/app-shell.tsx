@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarClock, LayoutDashboard, LogOut, Megaphone, MessagesSquare, ScrollText, Settings, ShieldCheck, Users, type LucideIcon } from "lucide-react";
+import { CalendarClock, History, LayoutDashboard, LogOut, Megaphone, MessagesSquare, ScrollText, Settings, ShieldCheck, Users, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState, type ReactNode } from "react";
@@ -13,22 +13,37 @@ import { ToastProvider } from "./toast";
 
 type NavigationItem = { href: string; label: string; icon: LucideIcon; match: readonly string[] };
 
+// Grouped by what an admin comes to do: look at the groups, keep them clean, talk to them, and
+// check on the bot itself.
 const navigation: readonly { title: string; items: readonly NavigationItem[] }[] = [
   {
-    title: "Quản lý",
+    title: "Tổng quan",
     items: [
       { href: "/dashboard", label: "Tổng quan", icon: LayoutDashboard, match: ["/dashboard"] },
       { href: "/groups", label: "Nhóm", icon: Users, match: ["/groups", "/group/"] },
-      { href: "/features", label: "Tính năng", icon: ShieldCheck, match: ["/features"] },
-      { href: "/violations", label: "Nhật ký vi phạm", icon: ScrollText, match: ["/violations"] },
-      { href: "/reminders", label: "Lịch nhắc hẹn", icon: CalendarClock, match: ["/reminders"] },
-      { href: "/broadcast", label: "Gửi tin nhắn hàng loạt", icon: Megaphone, match: ["/broadcast"] },
-      { href: "/auto-replies", label: "Trả lời tự động", icon: MessagesSquare, match: ["/auto-replies"] },
     ],
   },
   {
-    title: "Công cụ",
-    items: [{ href: "/setting", label: "Cài đặt", icon: Settings, match: ["/setting"] }],
+    title: "Kiểm duyệt",
+    items: [
+      { href: "/features", label: "Tính năng kiểm duyệt", icon: ShieldCheck, match: ["/features"] },
+      { href: "/violations", label: "Nhật ký vi phạm", icon: ScrollText, match: ["/violations"] },
+    ],
+  },
+  {
+    title: "Tin nhắn",
+    items: [
+      { href: "/auto-replies", label: "Trả lời tự động", icon: MessagesSquare, match: ["/auto-replies"] },
+      { href: "/broadcast", label: "Gửi tin nhắn hàng loạt", icon: Megaphone, match: ["/broadcast"] },
+      { href: "/reminders", label: "Lịch nhắc hẹn", icon: CalendarClock, match: ["/reminders"] },
+    ],
+  },
+  {
+    title: "Hệ thống",
+    items: [
+      { href: "/activity", label: "Lịch sử hoạt động", icon: History, match: ["/activity"] },
+      { href: "/setting", label: "Cài đặt", icon: Settings, match: ["/setting"] },
+    ],
   },
 ];
 

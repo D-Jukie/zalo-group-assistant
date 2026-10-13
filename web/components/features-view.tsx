@@ -154,7 +154,7 @@ export function FeaturesView() {
 
   return (
     <>
-      <PageHeader title="Tính năng" description="Cài đặt dùng chung của từng tính năng. Bật tắt tính năng cho một nhóm thì làm ở trang của nhóm đó." />
+      <PageHeader title="Tính năng kiểm duyệt" description="Cài đặt dùng chung của từng tính năng. Bật tắt tính năng cho một nhóm thì làm ở trang của nhóm đó." />
       <div role="tablist" aria-label="Tính năng" className="mb-4 flex gap-1 overflow-x-auto border-b border-border">
         {tabs.map((item) => (
           <button
