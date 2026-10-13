@@ -228,6 +228,15 @@ export type GroupActionResult = { groupId: string; groupName: string; ok: boolea
 // `warning` is set when the reminder was created but one of its messages could not be sent or scheduled.
 export type ReminderCreateResult = { groupId: string; groupName: string; ok: boolean; error?: string; warning?: string };
 
+// How a message is marked in the group; "normal" is an ordinary one.
+export type MessageUrgency = "important" | "urgent";
+
+// What one round of sending came to in one group.
+export type SentBatchGroup = { groupId: string; groupName: string; ok: boolean; error?: string; messages: { msgId: string; cliMsgId?: string }[]; recalledAt?: number; recallError?: string };
+
+// One message sent to several groups in one go, kept so that it can be taken back.
+export type SentBatch = { id: string; createdAt: number; text: string; imageCount: number; urgency?: MessageUrgency; scheduled: boolean; groups: SentBatchGroup[] };
+
 export type ReminderMember = { userId: string; name: string };
 
 export type ReminderResponses = { accepted: ReminderMember[]; rejected: ReminderMember[] };

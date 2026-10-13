@@ -73,7 +73,8 @@ export class ZaloLogin {
   }
 
   public async run(): Promise<API> {
-    const zalo = new Zalo({ logging: false });
+    // selfListen: Zalo echoes the bot's own messages, which carry the id needed to take them back.
+    const zalo = new Zalo({ logging: false, selfListen: true });
     const saved = await loadCredentials(this.store, this.credentialsKey);
     let api: API | undefined;
     if (saved !== undefined) {

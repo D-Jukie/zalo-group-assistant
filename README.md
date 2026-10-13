@@ -54,7 +54,7 @@ Dashboard là ứng dụng Next.js (App Router, Tailwind CSS, SWR) trong `web/`.
 | `/violations` | Nhật ký vi phạm trên mọi nhóm: tìm theo tên thành viên, nội dung tin, link hoặc tên nhóm; lọc theo quy tắc, kết quả xử lý và khoảng ngày giờ; tải thêm tin cũ hơn |
 | `/reminders` | Lịch nhắc hẹn của Zalo ở mọi nhóm đang bật bot: nội dung, giờ bắt đầu, số người tham gia và từ chối, danh sách thành viên đã trả lời |
 | `/reminders/new` | Tạo một nhắc hẹn cho một hoặc nhiều nhóm cùng lúc |
-| `/broadcast` | Gửi tin nhắn hàng loạt: một tin của bot cho một hoặc nhiều nhóm, gửi ngay hoặc hẹn giờ |
+| `/broadcast` | Gửi tin nhắn hàng loạt: một tin của bot cho một hoặc nhiều nhóm, gửi ngay hoặc hẹn giờ, đánh dấu quan trọng hoặc khẩn cấp; tab `Tin nhắn đã gửi` liệt kê các đợt đã gửi và cho thu hồi cả đợt |
 | `/auto-replies` | Trả lời tự động: bot trả lời khi thành viên nhắn một từ khóa hoặc gõ một lệnh như `/huongdan` |
 | `/activity` | Lịch sử hoạt động: những việc bot tự làm và những thao tác từ trang quản trị, có tìm kiếm và bộ lọc |
 | `/setting` | Cài đặt của chính bảng điều khiển: sáng/tối, tự làm mới, số nhóm mỗi trang, kết nối tới bot, đăng xuất |
@@ -233,6 +233,18 @@ Bot dùng tính năng `Nhắc hẹn` có sẵn của Zalo, nên thành viên th�
 - **Xóa:** nút `Xóa` gỡ nhắc hẹn khỏi nhóm trên Zalo.
 
 Chỉ nhóm đang bật bot mới được đọc và chọn. Bot nhớ tạm bảng nhắc hẹn của mỗi nhóm trong 5 phút và đọc lại ngay khi nhóm đó có thay đổi; nút `Làm mới` đọc lại mọi nhóm. Nhóm tắt quyền tạo nhắc hẹn của thành viên sẽ báo lỗi nếu bot không phải trưởng/phó nhóm. Nhắc hẹn của Zalo chỉ có giờ bắt đầu, không có giờ kết thúc.
+
+## Tin nhắn đã gửi và thu hồi
+
+Mỗi lần gửi từ trang `/broadcast` là một **đợt gửi**: một tin nhắn cho nhiều nhóm. Tab `Tin nhắn đã gửi` liệt kê 50 đợt gần nhất (giữ 30 ngày, trong collection `sent_batches`), mỗi đợt kèm giờ gửi, nội dung, số nhóm đã nhận và kết quả ở từng nhóm. Tin hẹn giờ cũng thành một đợt khi tới giờ gửi; tin lặp lại thì mỗi lần gửi là một đợt riêng.
+
+Nút `Thu hồi` thu hồi tin của đợt đó ở mọi nhóm đã nhận, lần lượt từng nhóm, gồm cả tin chữ lẫn ảnh. Nhóm nào thu hồi không được thì ghi lý do cạnh tên nhóm và có thể bấm `Thu hồi` lại; nhóm đã thu hồi xong không bị đụng tới nữa.
+
+- Zalo chỉ thu hồi một tin khi biết cả hai mã của nó, mà lúc gửi chỉ trả về một. Mã còn lại nằm trong bản sao tin nhắn Zalo gửi ngược về cho chính tài khoản bot, nên bot bật `selfListen` để nhận các bản sao đó và chờ tối đa 2 giây sau mỗi lần gửi. Tin nào không nhận được bản sao thì không thu hồi được.
+- Zalo chỉ cho thu hồi trong một khoảng thời gian sau khi gửi; quá hạn thì nhóm đó báo lỗi và tin được giữ nguyên.
+- Chỉ tin gửi từ `/broadcast` mới thành đợt. Tin của nhắc hẹn và câu trả lời tự động không nằm ở đây.
+
+Khi soạn tin ở `/broadcast` có thể chọn **mức độ**: `Bình thường`, `Quan trọng` hoặc `Khẩn cấp`; Zalo đánh dấu tin tương ứng trong nhóm.
 
 ## Định dạng tin nhắn
 

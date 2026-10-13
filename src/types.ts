@@ -305,8 +305,40 @@ export type MessageImage = Readonly<{ data: Buffer; extension: "jpg" | "png" | "
 // How many pictures one message may carry. Zalo shows several as one album.
 export const maxMessageImages = 6;
 
+// How a message is marked in the group. Left out for an ordinary one.
+export const messageUrgencies = ["important", "urgent"] as const;
+export type MessageUrgency = (typeof messageUrgencies)[number];
+
 // A message the bot posts to a group: text, pictures, or both.
-export type ReminderMessage = Readonly<{ text: string; images?: readonly MessageImage[] }>;
+export type ReminderMessage = Readonly<{ text: string; images?: readonly MessageImage[]; urgency?: MessageUrgency }>;
+
+// A message the bot sent, by the two ids Zalo needs to take it back. The second one comes a moment
+// after sending, and is missing when it never came.
+export type SentMessageRef = Readonly<{ msgId: string; cliMsgId?: string }>;
+
+// What one round of sending came to in one group.
+export type SentBatchGroup = Readonly<{
+  groupId: string;
+  groupName: string;
+  ok: boolean;
+  error?: string;
+  // The messages that went out: the text, and each picture or album.
+  messages: readonly SentMessageRef[];
+  recalledAt?: number;
+  recallError?: string;
+}>;
+
+// One round of sending the same message to several groups, kept so that it can be taken back.
+export type SentBatch = Readonly<{
+  id: string;
+  createdAt: number;
+  text: string;
+  imageCount: number;
+  urgency?: MessageUrgency;
+  // Whether it went out at a time set beforehand rather than at once.
+  scheduled: boolean;
+  groups: readonly SentBatchGroup[];
+}>;
 
 export type NewReminder = Readonly<{
   title: string;
@@ -330,6 +362,8 @@ export type ScheduledReminderMessage = ReminderMessage & Readonly<{
   // The reminder's own start and repeat, from which the following times are worked out.
   startTime: number;
   repeat: ReminderRepeat;
+  // Set on a message scheduled from the bulk messaging page: what its sending is filed under.
+  batchId?: string;
 }>;
 
 // What happened in one of the groups a reminder was created for.
@@ -353,6 +387,9 @@ export type ReminderMessageEdit = Readonly<{ text: string; images?: readonly (Me
 
 // `warning` is set when the reminder was created but one of its messages could not be sent or scheduled.
 export type ReminderCreateResult = Readonly<{ groupId: string; groupName: string; ok: boolean; error?: string; warning?: string }>;
+
+// The same for a message sent at once, with the messages that went out.
+export type MessageSendResult = ReminderCreateResult & Readonly<{ messages: readonly SentMessageRef[] }>;
 
 export type ReminderMember = Readonly<{ userId: string; name: string }>;
 

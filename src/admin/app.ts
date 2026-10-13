@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import { formatLogTime, noActivity, parseActivityCursor, parseActivityFilter, previewText, type ActivityRecorder } from "../activity/activity-log.js";
 import { parseJoinApprovalSettings } from "../approval/join-approval.js";
@@ -11,7 +12,7 @@ import type { BlockedLinks } from "../moderation/blocked-links.js";
 import { parseMessageRequest, parseReminderMessageEdit, parseReminderRequest } from "../reminders/reminder.js";
 import type { ReminderBoard } from "../reminders/reminder-board.js";
 import type { Store } from "../storage/store.js";
-import { violationMessageStatuses, violationRuleNames, violationRules, type ActivityCategory, type NewActivity, type GroupMember, type GroupSetting, type RateRule, type ViolationLogFilter, type ViolationRule } from "../types.js";
+import { violationMessageStatuses, violationRuleNames, violationRules, type ActivityCategory, type NewActivity, type GroupMember, type GroupSetting, type RateRule, type ViolationLogFilter, type ViolationRule, type ReminderCreateResult } from "../types.js";
 import { maxSpamWindowSeconds } from "../moderation/spam-detector.js";
 import { isRecord, now } from "../utils.js";
 import { groupFilters, searchGroups, summarizeGroups, type GroupFilter } from "./group-search.js";
@@ -33,6 +34,8 @@ const overviewDays = 14;
 const recentViolationLimit = 20;
 const violationPageSize = 30;
 const activityPageSize = 50;
+// How many rounds of sending the bulk messaging page lists.
+const sentBatchListSize = 50;
 // What each per-group switch is called in the history.
 const groupSettingNames: Readonly<Record<GroupSetting, string>> = { botEnabled: "bot", linkGuardEnabled: "chặn link", badWordFilterEnabled: "lọc từ cấm", spamGuardEnabled: "chống spam" };
 const defaultGroupPageSize = 25;
@@ -807,7 +810,18 @@ export function createAdminApp(bot: SimpleBot, store: Store, blockedLinks: Block
       return;
     }
     try {
-      const results = parsed.sendNow ? await reminders.sendMessageNow(parsed.message, parsed.groupIds) : await reminders.scheduleMessage(parsed.message, parsed, parsed.groupIds);
+      // One round of sending, whether it goes out now or at its time, is filed under one id.
+      const batchId = randomUUID();
+      const sent = parsed.sendNow ? await reminders.sendMessageNow(parsed.message, parsed.groupIds) : undefined;
+      // The dashboard is told what happened in each group; the ids of the messages stay with the bot.
+      const results: readonly ReminderCreateResult[] = parsed.sendNow
+        ? (sent ?? []).map((result) => ({ groupId: result.groupId, groupName: result.groupName, ok: result.ok, ...(result.error === undefined ? {} : { error: result.error }) }))
+        : await reminders.scheduleMessage(parsed.message, parsed, parsed.groupIds, batchId);
+      if (sent !== undefined) {
+        const batch = { createdAt: now(), text: parsed.message.text, imageCount: parsed.message.images?.length ?? 0, ...(parsed.message.urgency === undefined ? {} : { urgency: parsed.message.urgency }), scheduled: false };
+        // Groups the bot is not in were never sent to, so they are not part of the round.
+        for (const result of sent) if (result.groupName !== "") await store.addSentBatchGroup(batchId, batch, { groupId: result.groupId, groupName: result.groupName, ok: result.ok, ...(result.error === undefined ? {} : { error: result.error }), messages: result.messages });
+      }
       const preview = previewText(parsed.message.text, parsed.message.images?.length ?? 0);
       for (const result of results) {
         if (result.groupName === "") continue;
@@ -817,6 +831,33 @@ export function createAdminApp(bot: SimpleBot, store: Store, blockedLinks: Block
     } catch (error: unknown) {
       response.status(502).json({ error: `Không lấy được danh sách nhóm từ Zalo: ${errorMessage(error)}` });
     }
+  });
+  // The latest rounds of sending from the bulk messaging page, newest first.
+  app.get("/api/sent-batches", async (_request, response) => {
+    response.json(await store.listSentBatches(sentBatchListSize));
+  });
+  // Takes back every message of a round, group by group. Groups already done are left alone; the
+  // answer is the round as it stands afterwards, with what went wrong in each group.
+  app.post("/api/sent-batches/:batchId/recall", async (request, response) => {
+    const { batchId } = request.params;
+    const batch = await store.getSentBatch(batchId);
+    if (batch === undefined) {
+      response.status(404).json({ error: "Không tìm thấy đợt gửi này" });
+      return;
+    }
+    const preview = previewText(batch.text, batch.imageCount);
+    for (const group of batch.groups) {
+      if (!group.ok || group.recalledAt !== undefined || group.messages.length === 0) continue;
+      try {
+        await bot.recallMessages(group.groupId, group.messages);
+        await store.setSentBatchRecall(batchId, group.groupId, { recalledAt: now() });
+        logAdmin("messages", "Thu hồi tin nhắn", { groupId: group.groupId, groupName: group.groupName, detail: preview });
+      } catch (error: unknown) {
+        await store.setSentBatchRecall(batchId, group.groupId, { recallError: errorMessage(error) });
+        logAdmin("messages", "Thu hồi tin nhắn", { groupId: group.groupId, groupName: group.groupName, detail: preview, ok: false, error: errorMessage(error) });
+      }
+    }
+    response.json(await store.getSentBatch(batchId) ?? batch);
   });
   app.get("/api/reminder-messages/:messageId/images/:index", async (request, response) => {
     const index = Number(request.params.index);

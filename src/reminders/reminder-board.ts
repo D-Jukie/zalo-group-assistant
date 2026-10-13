@@ -1,8 +1,8 @@
 import { ReminderRepeatMode, ThreadType, type API } from "zca-js";
-import type { AdminGroupView, GroupReminder, NewReminder, ReminderMessage, ReminderCreateResult, ReminderList, ReminderMember, ReminderRepeat, ReminderResponses, ScheduledReminderMessage } from "../types.js";
+import type { AdminGroupView, GroupReminder, NewReminder, ReminderMessage, ReminderCreateResult, ReminderList, ReminderMember, ReminderRepeat, ReminderResponses, ScheduledReminderMessage, MessageSendResult } from "../types.js";
 import { asString, isRecord, now, uniqueStrings } from "../utils.js";
 import { nextOccurrence, parseBoardReminder, sortReminders, type BoardReminder } from "./reminder.js";
-import { sendGroupMessage } from "./reminder-messenger.js";
+import { sendGroupMessage, withoutClientIds, type SentResolver } from "./reminder-messenger.js";
 
 // A group's board is read again after this long. Changes the bot hears about (or makes) drop it sooner.
 const boardTtlMs = 5 * 60 * 1000;
@@ -54,6 +54,7 @@ export class ReminderBoard {
     private readonly groups: GroupSource,
     private readonly queue: MessageQueue,
     private readonly pauseMs = createPauseMs,
+    private readonly sent: SentResolver = withoutClientIds,
   ) {}
 
   // Call when something happened in a group, so its board is read again next time.
@@ -117,28 +118,30 @@ export class ReminderBoard {
   }
 
   // Posts a message of the bot's own to each group right away, one group after another.
-  public async sendMessageNow(message: ReminderMessage, groupIds: readonly string[]): Promise<ReminderCreateResult[]> {
+  // The answer names the messages that went out in each group, so the whole round can be taken back.
+  public async sendMessageNow(message: ReminderMessage, groupIds: readonly string[]): Promise<MessageSendResult[]> {
     const groups = new Map((await this.listGroups()).map((group) => [group.groupId, group]));
-    const results: ReminderCreateResult[] = [];
+    const results: MessageSendResult[] = [];
     for (const [index, groupId] of groupIds.entries()) {
       const group = groups.get(groupId);
       if (group === undefined) {
-        results.push({ groupId, groupName: "", ok: false, error: "Bot không ở trong nhóm này hoặc chưa được bật" });
+        results.push({ groupId, groupName: "", ok: false, error: "Bot không ở trong nhóm này hoặc chưa được bật", messages: [] });
         continue;
       }
       if (index > 0 && this.pauseMs > 0) await new Promise((resolve) => setTimeout(resolve, this.pauseMs));
       try {
-        await sendGroupMessage(this.api, groupId, message);
-        results.push({ groupId, groupName: group.name, ok: true });
+        const messages = await this.sent.resolve(await sendGroupMessage(this.api, groupId, message));
+        results.push({ groupId, groupName: group.name, ok: true, messages });
       } catch (error: unknown) {
-        results.push({ groupId, groupName: group.name, ok: false, error: errorMessage(error) });
+        results.push({ groupId, groupName: group.name, ok: false, error: errorMessage(error), messages: [] });
       }
     }
     return results;
   }
 
   // Queues a message of the bot's own for each group, to go out at `startTime` with no reminder behind it.
-  public async scheduleMessage(message: ReminderMessage, schedule: Readonly<{ startTime: number; repeat: ReminderRepeat }>, groupIds: readonly string[]): Promise<ReminderCreateResult[]> {
+  // They share `batchId`, under which their sending is filed when the time comes.
+  public async scheduleMessage(message: ReminderMessage, schedule: Readonly<{ startTime: number; repeat: ReminderRepeat }>, groupIds: readonly string[], batchId?: string): Promise<ReminderCreateResult[]> {
     const groups = new Map((await this.listGroups()).map((group) => [group.groupId, group]));
     const results: ReminderCreateResult[] = [];
     for (const groupId of groupIds) {
@@ -148,7 +151,7 @@ export class ReminderBoard {
         continue;
       }
       try {
-        await this.queue.addReminderMessage({ ...message, groupId, reminderId: "", title: "", dueAt: schedule.startTime, startTime: schedule.startTime, repeat: schedule.repeat });
+        await this.queue.addReminderMessage({ ...message, groupId, reminderId: "", title: "", dueAt: schedule.startTime, startTime: schedule.startTime, repeat: schedule.repeat, ...(batchId === undefined ? {} : { batchId }) });
         results.push({ groupId, groupName: group.name, ok: true });
       } catch (error: unknown) {
         results.push({ groupId, groupName: group.name, ok: false, error: errorMessage(error) });

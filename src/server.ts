@@ -69,8 +69,8 @@ async function main(): Promise<void> {
   const bot: SimpleBot = new SimpleBot(api, store, ownId, [new LinkGuardFeature(blockedLinks), new BadWordFilterFeature(bannedWords), new SpamGuardFeature(), new AutoReplyFeature(api, autoReplies, members, activity)], activity);
   await bot.start();
   activity.record({ category: "system", actor: "bot", title: "Bot khởi động" });
-  const reminders = new ReminderBoard(api, bot, store);
-  const reminderMessenger = new ReminderMessenger(api, store, activity);
+  const reminders = new ReminderBoard(api, bot, store, undefined, bot.ownMessages);
+  const reminderMessenger = new ReminderMessenger(api, store, activity, bot.ownMessages);
   reminderMessenger.start();
   const approver = new JoinApprover(api, bot, store, activity);
   approver.start();

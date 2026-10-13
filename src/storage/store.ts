@@ -1,6 +1,6 @@
 import { MongoClient, ObjectId, type Binary, type Collection, type Filter, type UpdateFilter } from "mongodb";
 import { GroupEventType, type GroupInfo } from "zca-js";
-import { defaultGroupCommands, type ActivityEntry, type ActivityFilter, type NewActivity, defaultJoinApproval, defaultKickRules, defaultSpamSettings, violationRules, type AutoReplyDraft, type AutoReplyKind, type GroupCommandSettings, type AutoReplyMatch, type AutoReplyRule, type JoinApprovalSettings, type JoinReview, type DailyViolations, type GroupSetting, type JsonRecord, type KickRule, type KickRules, type MemberViolations, type MessageImage, type PendingReminderMessage, type RecentViolation, type ReminderMessageEdit, type ViolationLogFilter, type ReminderRepeat, type ScheduledReminderMessage, type SpamSettings, type StoredGroup, type ViolationMatch, type ViolationMessage, type ViolationMessageStatus, type ViolationRule } from "../types.js";
+import { defaultGroupCommands, type ActivityEntry, type ActivityFilter, type NewActivity, defaultJoinApproval, defaultKickRules, defaultSpamSettings, violationRules, type AutoReplyDraft, type AutoReplyKind, type GroupCommandSettings, type AutoReplyMatch, type AutoReplyRule, type JoinApprovalSettings, type JoinReview, type DailyViolations, type GroupSetting, type JsonRecord, type KickRule, type KickRules, type MemberViolations, type MessageImage, type PendingReminderMessage, type RecentViolation, type ReminderMessageEdit, type ViolationLogFilter, type ReminderRepeat, type ScheduledReminderMessage, type MessageUrgency, type SentBatch, type SentBatchGroup, type SpamSettings, type StoredGroup, type ViolationMatch, type ViolationMessage, type ViolationMessageStatus, type ViolationRule } from "../types.js";
 import type { EncryptedSecret } from "./secret-box.js";
 import { asNumber, asString, escapeRegExp, isRecord, now, uniqueStrings } from "../utils.js";
 import { maxMessageImagesBytes, totalImageBytes } from "../reminders/reminder.js";
@@ -90,7 +90,31 @@ type ReminderMessageDocument = {
   startTime: number;
   repeat: ReminderRepeat;
   updatedAt?: number;
+  urgency?: MessageUrgency;
+  batchId?: string;
 };
+
+// How long a round of sending is kept. Zalo stops taking messages back long before this.
+const sentBatchRetentionDays = 30;
+
+type SentBatchDocument = Omit<SentBatch, "id" | "groups"> & {
+  _id: string;
+  groups: SentBatchGroup[];
+  // Drives the TTL index.
+  savedAt: Date;
+};
+
+function toSentBatch(document: SentBatchDocument): SentBatch {
+  return {
+    id: document._id,
+    createdAt: document.createdAt,
+    text: document.text,
+    imageCount: document.imageCount,
+    ...(document.urgency === undefined ? {} : { urgency: document.urgency }),
+    scheduled: document.scheduled,
+    groups: document.groups,
+  };
+}
 
 function toObjectId(id: string): ObjectId | undefined {
   return ObjectId.isValid(id) && id.length === 24 ? new ObjectId(id) : undefined;
@@ -160,6 +184,7 @@ export class Store {
     private readonly joinReviews: Collection<JoinReviewDocument>,
     private readonly autoReplies: Collection<AutoReplyDocument>,
     private readonly activity: Collection<ActivityDocument>,
+    private readonly sentBatches: Collection<SentBatchDocument>,
   ) {}
 
   public static async open(uri: string, databaseName: string): Promise<Store> {
@@ -178,6 +203,7 @@ export class Store {
       database.collection<JoinReviewDocument>("join_reviews"),
       database.collection<AutoReplyDocument>("auto_replies"),
       database.collection<ActivityDocument>("activity_log"),
+      database.collection<SentBatchDocument>("sent_batches"),
     );
     // MongoDB removes expired sessions on its own.
     await store.sessions.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
@@ -193,6 +219,8 @@ export class Store {
     await store.activity.createIndex({ groupId: 1, at: -1 });
     await store.activity.createIndex({ createdAt: 1 }, { expireAfterSeconds: activityRetentionDays * 24 * 60 * 60 });
     await store.reminderMessages.createIndex({ dueAt: 1 });
+    await store.sentBatches.createIndex({ createdAt: -1 });
+    await store.sentBatches.createIndex({ savedAt: 1 }, { expireAfterSeconds: sentBatchRetentionDays * 24 * 60 * 60 });
     await store.reminderMessages.createIndex({ groupId: 1, reminderId: 1 });
     return store;
   }
@@ -606,7 +634,33 @@ export class Store {
       startTime: message.startTime,
       repeat: message.repeat,
       updatedAt: now(),
+      ...(message.urgency === undefined ? {} : { urgency: message.urgency }),
+      ...(message.batchId === undefined ? {} : { batchId: message.batchId }),
     });
+  }
+
+  // Files what was sent to one group under a round of sending, starting the round when this is its first group.
+  public async addSentBatchGroup(id: string, batch: Omit<SentBatch, "id" | "groups">, group: SentBatchGroup): Promise<void> {
+    await this.sentBatches.updateOne({ _id: id }, { $setOnInsert: { ...batch, savedAt: new Date() }, $push: { groups: group } }, { upsert: true });
+  }
+
+  // The latest rounds of sending, newest first.
+  public async listSentBatches(limit: number): Promise<SentBatch[]> {
+    const documents = await this.sentBatches.find({}, { sort: { createdAt: -1 }, limit }).toArray();
+    return documents.map(toSentBatch);
+  }
+
+  public async getSentBatch(id: string): Promise<SentBatch | undefined> {
+    const document = await this.sentBatches.findOne({ _id: id });
+    return document === null ? undefined : toSentBatch(document);
+  }
+
+  // Notes how taking a round's messages back went in one of its groups.
+  public async setSentBatchRecall(id: string, groupId: string, outcome: Readonly<{ recalledAt: number } | { recallError: string }>): Promise<void> {
+    const update: UpdateFilter<SentBatchDocument> = "recalledAt" in outcome
+      ? { $set: { "groups.$[group].recalledAt": outcome.recalledAt }, $unset: { "groups.$[group].recallError": "" } }
+      : { $set: { "groups.$[group].recallError": outcome.recallError } };
+    await this.sentBatches.updateOne({ _id: id }, update, { arrayFilters: [{ "group.groupId": groupId }] });
   }
 
   // Every waiting message, soonest first, without the pictures themselves.
@@ -678,6 +732,8 @@ export class Store {
       dueAt: document.dueAt,
       startTime: document.startTime,
       repeat: document.repeat,
+      ...(document.urgency === undefined ? {} : { urgency: document.urgency }),
+      ...(document.batchId === undefined ? {} : { batchId: document.batchId }),
     };
   }
 

@@ -2,10 +2,11 @@ import { ThreadType, type API, type GroupEvent, type Message } from "zca-js";
 import { noActivity, type ActivityRecorder } from "../activity/activity-log.js";
 import { writeLog } from "../logger.js";
 import type { Store } from "../storage/store.js";
-import type { AdminGroupView, BlockedMember, BotStatus, LiveGroupInfo, MemberAddition, MemberProfile, MemberRemoval, StoredGroup } from "../types.js";
+import type { AdminGroupView, BlockedMember, BotStatus, LiveGroupInfo, MemberAddition, MemberProfile, MemberRemoval, SentMessageRef, StoredGroup } from "../types.js";
 import { isRecord, now } from "../utils.js";
 import { Enforcer } from "./enforcer.js";
 import type { BotFeature } from "./feature.js";
+import { OwnMessages } from "./own-messages.js";
 import { RecentMessages } from "./recent-messages.js";
 import { readInviteLink, readZaloSettings, settingsUpdate, type InviteLink, type ZaloGroupSettings } from "./zalo-settings.js";
 
@@ -35,6 +36,8 @@ export class SimpleBot {
   private connectionChangedAt = now();
   private groupMessagesSeen = 0;
   private readonly enforcer: Enforcer;
+  // The ids of what the bot itself sent, as Zalo echoes them.
+  public readonly ownMessages = new OwnMessages();
 
   public constructor(
     private readonly api: API,
@@ -233,6 +236,25 @@ export class SimpleBot {
     });
   }
 
+  // Takes back messages the bot sent to a group. Zalo needs both ids of a message; one whose second
+  // id never arrived cannot be taken back. Throws with the reason when not every message went.
+  public async recallMessages(groupId: string, messages: readonly SentMessageRef[]): Promise<void> {
+    const problems: string[] = [];
+    for (const message of messages) {
+      const cliMsgId = message.cliMsgId ?? this.ownMessages.clientIdOf(message.msgId);
+      if (cliMsgId === undefined) {
+        problems.push("thiếu mã tin nhắn do Zalo không gửi lại");
+        continue;
+      }
+      try {
+        await this.api.undo({ msgId: message.msgId, cliMsgId }, groupId, ThreadType.Group);
+      } catch (error: unknown) {
+        problems.push(error instanceof Error && error.message !== "" && error.message !== "null" ? error.message : "Zalo từ chối, có thể đã quá thời gian cho phép thu hồi");
+      }
+    }
+    if (problems.length > 0) throw new Error(Array.from(new Set(problems)).join("; "));
+  }
+
   // Everyone the group has blocked from joining again.
   public async listBlockedMembers(groupId: string): Promise<BlockedMember[]> {
     const blocked: BlockedMember[] = [];
@@ -429,7 +451,12 @@ export class SimpleBot {
   }
 
   private async handleMessage(message: Message): Promise<void> {
-    if (message.type !== ThreadType.Group || message.isSelf) return;
+    // A message of the bot's own comes back with the id that taking it back needs; nothing else is done with it.
+    if (message.isSelf) {
+      this.ownMessages.note(String(message.data.msgId), String(message.data.cliMsgId));
+      return;
+    }
+    if (message.type !== ThreadType.Group) return;
     const groupId = message.threadId;
     const userId = message.data.uidFrom;
     if (this.recentMessages.isDuplicate(groupId, message.data.msgId || message.data.cliMsgId)) return;

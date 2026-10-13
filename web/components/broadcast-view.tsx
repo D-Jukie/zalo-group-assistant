@@ -6,15 +6,17 @@ import { cn, formatNumber } from "@/lib/format";
 import type { PendingReminderMessage } from "@/lib/types";
 import { MessageForm } from "./message-form";
 import { PendingMessages } from "./pending-messages";
+import { SentBatches } from "./sent-batches";
 import { PageHeader } from "./ui";
 
 const views = [
   { value: "compose", label: "Soạn tin" },
   { value: "waiting", label: "Tin nhắn chờ gửi" },
+  { value: "sent", label: "Tin nhắn đã gửi" },
 ] as const;
 
-// Bulk messaging: write a message for several groups, and look after the ones still waiting for
-// their time. Which of the two is shown lives in the URL.
+// Bulk messaging: write a message for several groups, look after the ones still waiting for their
+// time, and take back the ones that went out. Which of the three is shown lives in the URL.
 export function BroadcastView() {
   const router = useRouter();
   const pathname = usePathname();
@@ -25,7 +27,7 @@ export function BroadcastView() {
   return (
     <>
       <PageHeader title="Gửi tin nhắn hàng loạt" description="Bot gửi một tin nhắn vào nhiều nhóm cùng lúc: gửi ngay, hoặc hẹn giờ để gửi sau." />
-      <div role="group" aria-label="Chọn soạn tin hoặc tin nhắn chờ gửi" className="mb-4 inline-flex gap-1 rounded-md border border-border bg-surface p-1">
+      <div role="group" aria-label="Chọn soạn tin, tin nhắn chờ gửi hoặc tin nhắn đã gửi" className="mb-4 inline-flex gap-1 rounded-md border border-border bg-surface p-1">
         {views.map((item) => (
           <button
             key={item.value}
@@ -42,7 +44,7 @@ export function BroadcastView() {
           </button>
         ))}
       </div>
-      {view === "waiting" ? <PendingMessages /> : <MessageForm />}
+      {view === "waiting" ? <PendingMessages /> : view === "sent" ? <SentBatches /> : <MessageForm />}
     </>
   );
 }

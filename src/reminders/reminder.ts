@@ -1,4 +1,4 @@
-import { maxMessageImages, reminderRepeats, type GroupReminder, type MessageImage, type NewReminder, type ReminderMessage, type ReminderMessageEdit, type ReminderRepeat } from "../types.js";
+import { maxMessageImages, messageUrgencies, reminderRepeats, type GroupReminder, type MessageImage, type NewReminder, type ReminderMessage, type ReminderMessageEdit, type ReminderRepeat } from "../types.js";
 import { plainText } from "../message-format.js";
 import { asNumber, asString, isRecord, uniqueStrings } from "../utils.js";
 import { readImageInfo } from "./image-size.js";
@@ -160,8 +160,12 @@ export function parseReminderMessage(value: unknown): ReminderMessage | undefine
   const images = value.images === undefined || value.images === null ? [] : parseImageList(value.images, parseMessageImage);
   if (typeof images === "string") return images;
   if (totalImageBytes(images) > maxMessageImagesBytes) return tooHeavy;
-  if (images.length === 0) return text === "" ? "Tin nhắn cần có nội dung hoặc ảnh" : { text };
-  return { text, images };
+  // "normal" and nothing at all both mean an ordinary message.
+  const urgency = messageUrgencies.find((item) => item === value.urgency);
+  if (urgency === undefined && value.urgency !== undefined && value.urgency !== null && value.urgency !== "normal") return "Mức độ của tin nhắn không hợp lệ";
+  const mark = urgency === undefined ? {} : { urgency };
+  if (images.length === 0) return text === "" ? "Tin nhắn cần có nội dung hoặc ảnh" : { text, ...mark };
+  return { text, images, ...mark };
 }
 
 // The groups a request is for: at least one, each named once.

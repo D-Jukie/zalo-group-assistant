@@ -22,6 +22,18 @@ const modes = [
 
 type Mode = (typeof modes)[number]["value"];
 
+// How Zalo marks the message in the group.
+const urgencies = [
+  { value: "normal", label: "Bình thường" },
+  { value: "important", label: "Quan trọng" },
+  { value: "urgent", label: "Khẩn cấp" },
+] as const;
+
+type Urgency = (typeof urgencies)[number]["value"];
+
+// The sent messages are another tab of the same page.
+const sentHref = "/broadcast?view=sent";
+
 // What is about to go out, kept while the "send now" confirmation is open.
 type Outgoing = { groupIds: string[]; body: Record<string, unknown> };
 
@@ -34,6 +46,7 @@ export function MessageForm() {
   const [text, setText] = useState("");
   const [images, setImages] = useState<PickedImage[]>([]);
   const [mode, setMode] = useState<Mode>("now");
+  const [urgency, setUrgency] = useState<Urgency>("normal");
   const schedule = useSchedule();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
@@ -48,6 +61,7 @@ export function MessageForm() {
       const response = await send<{ results: ReminderCreateResult[] }>("POST", "/reminder-messages", outgoing.body);
       setResults({ mode: sentMode, items: response.results });
       void mutate("/reminder-messages");
+      void mutate("/sent-batches");
       const done = response.results.filter((item) => item.ok).length;
       const verb = sentMode === "now" ? "gửi tin nhắn" : "hẹn giờ tin nhắn";
       if (done === response.results.length) toast.success(`Đã ${verb} cho ${formatNumber(done)} nhóm`);
@@ -68,9 +82,9 @@ export function MessageForm() {
     if (groupIds.length === 0) return setError("Hãy chọn ít nhất một nhóm.");
     if (groupIds.length > maxGroups) return setError(`Mỗi lần chỉ gửi được cho tối đa ${maxGroups} nhóm; hãy bỏ bớt ${formatNumber(groupIds.length - maxGroups)} nhóm.`);
     if (text.trim() === "" && images.length === 0) return setError("Hãy nhập nội dung tin nhắn hoặc chọn ảnh.");
-    const message = { text: text.trim(), images: images.map((image) => ({ data: dataUrlPayload(image.dataUrl) })) };
+    const message = { text: text.trim(), images: images.map((image) => ({ data: dataUrlPayload(image.dataUrl) })), urgency };
     if (mode === "now") {
-      // A message that has gone out cannot be taken back, so sending at once asks first.
+      // A message that has gone out has been read by then, even if it is taken back, so sending at once asks first.
       setConfirming({ groupIds, body: { message, groupIds, sendNow: true } });
       return;
     }
@@ -97,8 +111,8 @@ export function MessageForm() {
             : now ? "Tin nhắn đã có trong các nhóm này." : "Tin nhắn nằm trong danh sách chờ gửi; sửa hoặc hủy được cho tới giờ gửi."}
           doneLabel={now ? "Đã gửi" : "Đã hẹn giờ"}
           againLabel="Soạn tin nhắn khác"
-          backHref={now ? "/groups" : waitingHref}
-          backLabel={now ? "Về danh sách nhóm" : "Xem tin nhắn chờ gửi"}
+          backHref={now ? sentHref : waitingHref}
+          backLabel={now ? "Xem tin nhắn đã gửi" : "Xem tin nhắn chờ gửi"}
           onRetry={(groupIds) => {
             setSelected(new Set(groupIds));
             setResults(undefined);
@@ -106,6 +120,7 @@ export function MessageForm() {
           onAgain={() => {
             setSelected(new Set());
             setText("");
+            setUrgency("normal");
             setImages([]);
             schedule.reset();
             setResults(undefined);
@@ -137,6 +152,27 @@ export function MessageForm() {
               pictureLabel="Ảnh kèm theo tin nhắn"
             />
             <div>
+              <p id="urgency-label" className="mb-1.5 text-sm font-medium">Mức độ</p>
+              <div role="radiogroup" aria-labelledby="urgency-label" className="inline-flex gap-1 rounded-md border border-border bg-background p-1">
+                {urgencies.map((item) => (
+                  <button
+                    key={item.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={urgency === item.value}
+                    onClick={() => setUrgency(item.value)}
+                    className={cn(
+                      "h-7 rounded px-3 text-sm transition-colors",
+                      urgency === item.value ? "bg-surface-hover font-medium text-foreground" : "text-muted hover:text-foreground",
+                    )}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+              {urgency === "normal" ? null : <p className="mt-1.5 text-sm text-muted">Zalo đánh dấu tin này là {urgency === "urgent" ? "khẩn cấp" : "quan trọng"} trong nhóm.</p>}
+            </div>
+            <div>
               <p id="send-mode-label" className="mb-1.5 text-sm font-medium">Thời điểm gửi</p>
               <div role="radiogroup" aria-labelledby="send-mode-label" className="inline-flex gap-1 rounded-md border border-border bg-background p-1">
                 {modes.map((item) => (
@@ -162,7 +198,7 @@ export function MessageForm() {
                 <p className="text-sm text-muted">Bot phải đang chạy vào giờ gửi. Với kiểu lặp lại, bot gửi lại tin này mỗi ngày, mỗi tuần hoặc mỗi tháng cho tới khi bạn hủy ở danh sách chờ gửi.</p>
               </>
             ) : (
-              <p className="text-sm text-muted">Bot gửi lần lượt từng nhóm ngay khi bạn xác nhận. Tin đã gửi không thu hồi được từ đây.</p>
+              <p className="text-sm text-muted">Bot gửi lần lượt từng nhóm ngay khi bạn xác nhận. Tin đã gửi nằm ở tab “Tin nhắn đã gửi”, nơi thu hồi được cả đợt.</p>
             )}
             <ErrorNote message={error} />
             <div className="flex justify-end">
@@ -181,7 +217,7 @@ export function MessageForm() {
         onConfirm={() => { if (confirming !== undefined) void deliver(confirming, "now"); }}
         onCancel={() => setConfirming(undefined)}
       >
-        Bot sẽ gửi tin này vào {formatNumber(confirming?.groupIds.length ?? 0)} nhóm ngay lập tức. Tin đã gửi không thu hồi được từ đây.
+        Bot sẽ gửi tin này vào {formatNumber(confirming?.groupIds.length ?? 0)} nhóm ngay lập tức. Sau khi gửi, đợt này thu hồi được ở tab “Tin nhắn đã gửi” trong thời gian Zalo cho phép.
       </ConfirmDialog>
     </>
   );
