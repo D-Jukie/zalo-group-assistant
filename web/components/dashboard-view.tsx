@@ -26,7 +26,7 @@ function Tiles() {
       <StatTile
         label="Nhóm"
         value={groups ? formatNumber(groups.total) : pending}
-        hint={groups ? `Bot là QTV ở ${formatNumber(groups.botAdmin)} nhóm` : undefined}
+        hint={groups ? `Bot là trưởng nhóm ở ${formatNumber(groups.botAdmin)} nhóm` : undefined}
       />
       <StatTile
         label="Nhóm đang bật bot"

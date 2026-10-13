@@ -42,7 +42,7 @@ function BotSwitch({ group, onChange }: { group: Group; onChange: (group: Group)
     <div className="flex items-center gap-3 rounded-lg border border-border bg-surface px-3 py-2">
       <span className="text-sm">
         <span className="block font-medium">{group.botEnabled ? "Bot đang bật" : "Bot đang tắt"}</span>
-        <span className="block text-xs text-muted">{group.botIsAdmin ? "Bot là QTV" : "Bot là thành viên"}</span>
+        <span className="block text-xs text-muted">{group.botIsAdmin ? "Bot là trưởng nhóm" : "Bot là thành viên"}</span>
       </span>
       <CompactSwitch checked={group.botEnabled} onChange={(value) => toggle("bot", value)} label="Bật bot ở nhóm này" />
     </div>
@@ -212,7 +212,7 @@ function FeatureCard({ group, rule, toggleName, enabled, title, description, onC
         <div className="min-w-0">{children}</div>
         <div className="min-w-0 px-5 py-1">
           <p className="pt-3 text-sm font-medium">Khi có vi phạm</p>
-          <p className="mt-1 text-sm text-muted">{group.botIsAdmin ? "Tin vi phạm bị xóa và được ghi vào thống kê." : "Bot không phải QTV nên chỉ ghi nhận vi phạm, không xóa được tin."}</p>
+          <p className="mt-1 text-sm text-muted">{group.botIsAdmin ? "Tin vi phạm bị xóa và được ghi vào thống kê." : "Bot không phải trưởng nhóm nên chỉ ghi nhận vi phạm, không xóa được tin."}</p>
           <KickSetting
             // Saved numbers remount the form so its fields show the stored values again.
             key={`${kickRule.enabled}-${kickRule.count}-${kickRule.windowSeconds}`}
@@ -531,11 +531,6 @@ function GroupPage({ group, backLink, onChange }: { group: Group; backLink: Reac
         </div>
         <BotSwitch group={group} onChange={onChange} />
       </header>
-      {group.botEnabled ? null : (
-        <p role="status" className="mb-4 rounded-md border border-warning/30 bg-warning-surface px-4 py-3 text-sm text-warning">
-          Bot đang bỏ qua hoàn toàn nhóm này: không kiểm tra, không ghi nhận, không xóa tin, không kick. Bật bot ở góc trên để các tính năng có hiệu lực.
-        </p>
-      )}
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatTile label="Thành viên" value={formatNumber(group.memberCount)} hint={group.botIsAdmin ? "Bot là trưởng hoặc phó nhóm" : "Bot là thành viên: chỉ ghi nhận"} />
         <StatTile label="Tính năng đang bật" value={`${active.length}/${features.length}`} hint={active.length === 0 ? (group.botEnabled ? "Chưa bật tính năng nào" : "Bot đang tắt") : active.map((feature) => feature.name).join(", ")} />

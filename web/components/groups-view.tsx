@@ -22,7 +22,7 @@ const rowClass = "h-[3.25rem] border-b border-border last:border-0";
 const filters = [
   { value: "all", label: "Tất cả" },
   { value: "enabled", label: "Đang bật bot" },
-  { value: "admin", label: "Bot là QTV" },
+  { value: "admin", label: "Bot là trưởng nhóm" },
   { value: "member", label: "Bot là thành viên" },
 ] as const;
 
@@ -283,7 +283,7 @@ export function GroupsView() {
                     <td className="px-5">
                       <CompactSwitch checked={group.botEnabled} onChange={(value) => setBotEnabled(group, value)} label={`Bật bot ở nhóm ${group.name || group.groupId}`} />
                     </td>
-                    <td className="px-5">{group.botIsAdmin ? <Badge tone="success">QTV</Badge> : <Badge>Thành viên</Badge>}</td>
+                    <td className="px-5">{group.botIsAdmin ? <Badge tone="success">Trưởng nhóm</Badge> : <Badge>Thành viên</Badge>}</td>
                     <td className="px-5"><RuleBadges group={group} /></td>
                     <td className="truncate px-5 tabular-nums text-muted">{formatDateTime(group.updatedAt)}</td>
                   </tr>
