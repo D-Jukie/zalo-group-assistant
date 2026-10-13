@@ -7,7 +7,7 @@ const adminSessionCookie = "zalo_admin_session";
 const rememberedSessionMaxAgeSeconds = 30 * 24 * 60 * 60;
 const browserSessionMaxAgeSeconds = 12 * 60 * 60;
 
-function cookieValue(request: Request, name: string): string | undefined {
+export function cookieValue(request: Request, name: string): string | undefined {
   const header = request.headers.cookie;
   if (header === undefined) return undefined;
   for (const item of header.split(";")) {
@@ -23,7 +23,7 @@ function cookieValue(request: Request, name: string): string | undefined {
 }
 
 // Only the hash is stored, so a database leak does not hand out usable sessions.
-function hashToken(token: string): string {
+export function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
@@ -33,13 +33,13 @@ export async function startSession(store: Store, response: Response, remember: b
   await store.createSession(hashToken(token), new Date(now() + maxAgeSeconds * 1000));
   const attributes = [`${adminSessionCookie}=${encodeURIComponent(token)}`, "Path=/", "HttpOnly", "SameSite=Lax"];
   if (remember) attributes.push(`Max-Age=${maxAgeSeconds}`);
-  response.setHeader("Set-Cookie", attributes.join("; "));
+  response.append("Set-Cookie", attributes.join("; "));
 }
 
 export async function endSession(store: Store, request: Request, response: Response): Promise<void> {
   const token = cookieValue(request, adminSessionCookie);
   if (token !== undefined) await store.deleteSession(hashToken(token));
-  response.setHeader("Set-Cookie", `${adminSessionCookie}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+  response.append("Set-Cookie", `${adminSessionCookie}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
 }
 
 export async function isAuthenticated(request: Request, store: Store): Promise<boolean> {

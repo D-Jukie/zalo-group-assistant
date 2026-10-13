@@ -6,6 +6,7 @@ export type Config = Readonly<{
   credentialsKey: Buffer;
   adminZaloId: string | undefined;
   adminZaloPhone: string | undefined;
+  adminEmail: string | undefined;
 }>;
 
 function optionalEnv(name: string): string | undefined {
@@ -30,5 +31,6 @@ export function parseConfig(): Config {
     credentialsKey: parseCredentialsKey(),
     adminZaloId: optionalEnv("ADMIN_ZALO_ID"),
     adminZaloPhone: optionalEnv("ADMIN_ZALO_PHONE"),
+    adminEmail: optionalEnv("ADMIN_EMAIL")?.toLowerCase(),
   };
 }

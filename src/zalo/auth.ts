@@ -1,11 +1,9 @@
-import { rm } from "node:fs/promises";
-import { Zalo, type API, type Credentials } from "zca-js";
+import { LoginQRCallbackEventType, Zalo, type API, type Credentials } from "zca-js";
 import { decryptSecret, encryptSecret } from "../storage/secret-box.js";
 import type { Store } from "../storage/store.js";
 import { isRecord } from "../utils.js";
 
 const credentialsSecretName = "zalo-credentials";
-const qrPath = "./qr.png";
 
 function isCredentials(value: unknown): value is Credentials {
   if (!isRecord(value)) return false;
@@ -42,33 +40,64 @@ async function saveCredentials(store: Store, key: Buffer, api: API): Promise<voi
   await store.setSecret(credentialsSecretName, encryptSecret(plaintext, key, credentialsSecretName));
 }
 
-async function loginWithQr(zalo: Zalo): Promise<API> {
-  try {
-    return await zalo.loginQR({ qrPath });
-  } finally {
-    // The QR image is only useful while waiting for the scan.
-    await rm(qrPath, { force: true });
-  }
-}
+// Where signing the bot in to Zalo stands, as the dashboard shows it.
+export type ZaloLoginState = Readonly<
+  | { status: "starting" }
+  | { status: "qr"; image: string; scannedBy?: string }
+  | { status: "ready" }
+>;
 
-export async function login(store: Store, credentialsKey: Buffer): Promise<API> {
-  const zalo = new Zalo({ logging: false });
-  const saved = await loadCredentials(store, credentialsKey);
-  let api: API;
-  if (saved !== undefined) {
-    console.log("[AUTH] Đang thử phiên Zalo đã lưu...");
-    try {
-      api = await zalo.login(saved);
-      console.log("[AUTH] Đăng nhập bằng phiên đã lưu thành công.");
-    } catch {
-      console.warn("[AUTH] Phiên đã lưu không còn hợp lệ; QR mới sẽ được lưu tại ./qr.png.");
-      api = await loginWithQr(zalo);
-    }
-  } else {
-    console.log("[AUTH] Chưa có phiên Zalo; QR đăng nhập sẽ được lưu tại ./qr.png.");
-    api = await loginWithQr(zalo);
+const retryDelayMs = 5000;
+
+// Signs the bot in to Zalo: with the saved session when it still works, otherwise with a QR code
+// that the dashboard shows. The QR is renewed whenever it expires or is declined, until someone scans it.
+export class ZaloLogin {
+  private current: ZaloLoginState = { status: "starting" };
+
+  public constructor(private readonly store: Store, private readonly credentialsKey: Buffer) {}
+
+  public get state(): ZaloLoginState {
+    return this.current;
   }
-  await saveCredentials(store, credentialsKey, api);
-  console.log("[AUTH] Đã lưu phiên Zalo.");
-  return api;
+
+  private loginWithQr(zalo: Zalo): Promise<API> {
+    return zalo.loginQR({}, (event) => {
+      if (event.type === LoginQRCallbackEventType.QRCodeGenerated) {
+        this.current = { status: "qr", image: `data:image/png;base64,${event.data.image}` };
+      } else if (event.type === LoginQRCallbackEventType.QRCodeScanned) {
+        if (this.current.status === "qr") this.current = { ...this.current, scannedBy: event.data.display_name };
+      } else if (event.type === LoginQRCallbackEventType.QRCodeExpired || event.type === LoginQRCallbackEventType.QRCodeDeclined) {
+        event.actions.retry();
+      }
+    });
+  }
+
+  public async run(): Promise<API> {
+    const zalo = new Zalo({ logging: false });
+    const saved = await loadCredentials(this.store, this.credentialsKey);
+    let api: API | undefined;
+    if (saved !== undefined) {
+      console.log("[AUTH] Đang thử phiên Zalo đã lưu...");
+      try {
+        api = await zalo.login(saved);
+        console.log("[AUTH] Đăng nhập bằng phiên đã lưu thành công.");
+      } catch {
+        console.warn("[AUTH] Phiên đã lưu không còn hợp lệ.");
+      }
+    }
+    if (api === undefined) console.log("[AUTH] Chưa có phiên Zalo; mở trang quản trị và quét mã QR để đăng nhập bot.");
+    while (api === undefined) {
+      try {
+        api = await this.loginWithQr(zalo);
+      } catch (error: unknown) {
+        this.current = { status: "starting" };
+        console.warn("[AUTH] Không tạo được mã QR, sẽ thử lại:", error instanceof Error ? error.message : String(error));
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      }
+    }
+    await saveCredentials(this.store, this.credentialsKey, api);
+    console.log("[AUTH] Đã lưu phiên Zalo.");
+    this.current = { status: "ready" };
+    return api;
+  }
 }

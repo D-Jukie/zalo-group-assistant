@@ -46,7 +46,7 @@ Dashboard là ứng dụng Next.js (App Router, Tailwind CSS, SWR) trong `web/`.
 
 | Trang | Nội dung |
 |---|---|
-| `/login` | Đăng nhập bằng mã gửi qua Zalo |
+| `/login` | Đăng nhập: mã PIN, mã QR đăng nhập Zalo cho bot, rồi mã gửi qua Zalo |
 | `/dashboard` | Thông tin bot, các con số tổng quan, biểu đồ vi phạm 14 ngày, 20 tin vi phạm gần nhất |
 | `/groups` | Danh sách nhóm, có công tắc bật tắt bot cho từng nhóm, tìm kiếm, bộ lọc và phân trang (lưu trên URL). Bot thực hiện việc tìm, lọc và chia trang; ô tìm chờ 250ms sau khi ngừng gõ rồi mới gửi yêu cầu, và tìm được theo tên không dấu, hoặc theo ID nhóm khi gõ từ 6 chữ số trở lên |
 | `/group/<id>` | Công tắc bật bot và các con số của nhóm ở đầu trang, rồi năm tab: `Tính năng` (từng tính năng kèm danh sách riêng và cài đặt kick của nó, và duyệt thành viên tự động), `Trả lời tự động` (câu trả lời riêng của nhóm), `Thành viên`, `Chờ duyệt`, `Vi phạm` (thống kê theo thành viên và tin vi phạm đã lưu) |
@@ -117,6 +117,7 @@ MONGODB_URI=mongodb://127.0.0.1:27017
 MONGODB_DATABASE=zalo_bot
 ZALO_CREDENTIALS_KEY=<khóa 32 byte dạng base64>
 ADMIN_ZALO_PHONE=<số điện thoại Zalo của người quản trị>
+ADMIN_EMAIL=<email của người quản trị>
 ```
 
 Tạo `ZALO_CREDENTIALS_KEY` một lần rồi đặt vào `.env`:
@@ -125,7 +126,7 @@ Tạo `ZALO_CREDENTIALS_KEY` một lần rồi đặt vào `.env`:
 node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 ```
 
-Phiên Zalo của bot (cookie, IMEI) được mã hóa AES-256-GCM bằng khóa này rồi lưu trong MongoDB (collection `secrets`), nên các lần chạy sau không cần quét QR nếu phiên còn hạn. Khóa chỉ nằm trong `.env`, không nằm trong MongoDB hay mã nguồn. Nếu mất hoặc đổi khóa, bot không đọc được phiên cũ và sẽ yêu cầu quét QR lại.
+Phiên Zalo của bot (cookie, IMEI) được mã hóa AES-256-GCM bằng khóa này rồi lưu trong MongoDB (collection `secrets`), nên các lần chạy sau không cần quét QR nếu phiên còn hạn. Mã QR hiện trên trang quản trị, sau bước mã PIN. Khóa chỉ nằm trong `.env`, không nằm trong MongoDB hay mã nguồn. Nếu mất hoặc đổi khóa, bot không đọc được phiên cũ và sẽ yêu cầu quét QR lại.
 
 ## Thông tin bot
 
@@ -133,14 +134,22 @@ Trang `/dashboard` có thẻ thông tin bot: tên, ảnh đại diện và ID c�
 
 ## Đăng nhập quản trị
 
-Trang quản trị không dùng tài khoản/mật khẩu. Bấm `Gửi mã đăng nhập`, bot sẽ nhắn một mã 8 chữ số tới tài khoản Zalo của người quản trị, rồi nhập mã đó để đăng nhập. Zalo không cho một tài khoản tự nhắn cho chính nó, nên tài khoản nhận mã phải khác tài khoản bot.
+Bot mở API ngay khi khởi động, trước cả khi đăng nhập Zalo, để trang quản trị dẫn bạn qua ba bước:
 
-Đặt một trong hai biến trong `.env`: `ADMIN_ZALO_PHONE` (số điện thoại, bot tự tra ra ID và in `ADMIN_ZALO_ID=...` ra console ở lần gửi đầu) hoặc `ADMIN_ZALO_ID` (ID Zalo, được ưu tiên nếu có cả hai). Tra theo số điện thoại chỉ hoạt động khi tài khoản đó cho phép tìm bằng số điện thoại.
+1. **Mã PIN.** Nhập email quản trị (`ADMIN_EMAIL` trong `.env`) và mã PIN. Lần đầu tiên mở trang quản trị, bước này yêu cầu đặt mã PIN (đúng 6 chữ số, nhập từng ô như mã 2FA); những lần sau thì nhập lại mã đó.
+2. **Đăng nhập Zalo cho bot.** Nếu bot chưa có phiên Zalo, trang hiện mã QR để quét bằng tài khoản sẽ chạy bot. Mã tự đổi mới khi hết hạn. Bot đã có phiên thì bước này được bỏ qua.
+3. **Mã xác thực thiết bị.** Bấm `Gửi mã đăng nhập`, bot nhắn một mã 8 chữ số tới tài khoản Zalo của người quản trị; nhập mã đó để trình duyệt đang dùng được vào bảng điều khiển. Zalo không cho một tài khoản tự nhắn cho chính nó, nên tài khoản nhận mã phải khác tài khoản bot.
 
-- Mã có hiệu lực 5 phút, dùng một lần, tối đa 5 lần nhập sai; mỗi phút chỉ gửi được một mã.
-- Phiên đăng nhập lưu trong MongoDB (collection `admin_sessions`, chỉ lưu mã băm) và bị xóa khi đăng xuất.
-- `Ghi nhớ đăng nhập 30 ngày` giữ phiên 30 ngày; bỏ chọn thì cookie mất khi đóng trình duyệt và phiên hết hạn sau 12 giờ.
-- Ai đọc được tin nhắn của tài khoản Zalo quản trị hoặc của tài khoản bot thì đăng nhập được trang quản trị. Nếu mở trang ra ngoài máy này, hãy đặt sau HTTPS.
+Đặt `ADMIN_EMAIL`, và một trong hai biến `ADMIN_ZALO_PHONE` (số điện thoại, bot tự tra ra ID và in `ADMIN_ZALO_ID=...` ra console ở lần gửi đầu) hoặc `ADMIN_ZALO_ID` (ID Zalo, được ưu tiên nếu có cả hai). Tra theo số điện thoại chỉ hoạt động khi tài khoản đó cho phép tìm bằng số điện thoại.
+
+- Mã PIN chỉ được lưu dưới dạng băm scrypt có muối, mã hóa bằng `ZALO_CREDENTIALS_KEY`, trong MongoDB (collection `secrets`, mục `admin-pin`). Quên mã thì xóa mục đó để đặt lại; đổi `ZALO_CREDENTIALS_KEY` cũng làm mã PIN cũ mất hiệu lực.
+- Nhập sai email hoặc mã PIN 5 lần thì mọi lần thử bị tạm dừng 15 phút.
+- Sau khi nhập đúng mã PIN, trình duyệt có 30 phút để hoàn tất hai bước còn lại. Bot khởi động lại thì phải nhập lại mã PIN.
+- Mã xác thực có hiệu lực 5 phút, dùng một lần, tối đa 5 lần nhập sai; mỗi phút chỉ gửi được một mã.
+- Phiên đăng nhập gắn với trình duyệt, lưu trong MongoDB (collection `admin_sessions`, chỉ lưu mã băm) và bị xóa khi đăng xuất.
+- `Ghi nhớ thiết bị này 30 ngày` giữ phiên 30 ngày; bỏ chọn thì cookie mất khi đóng trình duyệt và phiên hết hạn sau 12 giờ.
+- Trình duyệt đã được ghi nhớ mà bot mất phiên Zalo thì chỉ cần nhập mã PIN và quét lại QR, không cần mã xác thực nữa.
+- Nếu mở trang ra ngoài máy này, hãy đặt sau HTTPS.
 
 ## Link bị chặn thêm
 

@@ -3,9 +3,10 @@
 import { useRouter } from "next/navigation";
 import { useRef, useState, type FormEvent } from "react";
 import { errorText, send } from "@/lib/api";
+import { noAutofill } from "./pin-input";
 import { Button, ErrorNote, Input } from "./ui";
 
-// Two steps on one screen: ask the bot to send a code over Zalo, then enter it.
+// The last step of signing in: ask the bot to send a code over Zalo, then enter it.
 export function LoginForm() {
   const router = useRouter();
   const codeRef = useRef<HTMLInputElement>(null);
@@ -51,7 +52,7 @@ export function LoginForm() {
         {codeSent ? "Gửi lại mã" : "Gửi mã đăng nhập"}
       </Button>
       {codeSent ? (
-        <form onSubmit={signIn} className="mt-5 space-y-4">
+        <form onSubmit={signIn} autoComplete="off" className="mt-5 space-y-4">
           <p className="text-sm text-muted">Đã gửi mã. Mở Zalo của tài khoản quản trị và xem tin nhắn từ bot; mã có hiệu lực 5 phút.</p>
           <div>
             <label htmlFor="code" className="mb-1.5 block text-sm font-medium">Mã đăng nhập</label>
@@ -60,7 +61,7 @@ export function LoginForm() {
               id="code"
               name="code"
               inputMode="numeric"
-              autoComplete="one-time-code"
+              {...noAutofill}
               spellCheck={false}
               maxLength={8}
               pattern="[0-9]{8}"
@@ -71,7 +72,7 @@ export function LoginForm() {
           </div>
           <label className="flex cursor-pointer items-center gap-2 text-sm">
             <input type="checkbox" name="remember" className="size-4 accent-[var(--accent)]" />
-            Ghi nhớ đăng nhập 30 ngày
+            Ghi nhớ thiết bị này 30 ngày
           </label>
           <Button type="submit" variant="primary" pending={signingIn} className="w-full">Đăng nhập</Button>
         </form>

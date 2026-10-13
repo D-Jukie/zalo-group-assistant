@@ -15,8 +15,7 @@ import { maxSpamWindowSeconds } from "../moderation/spam-detector.js";
 import { isRecord, now } from "../utils.js";
 import { groupFilters, searchGroups, summarizeGroups, type GroupFilter } from "./group-search.js";
 import { memberSorts, searchMembers } from "./member-search.js";
-import type { LoginCodeService } from "./login-code.js";
-import { authMiddleware, endSession, isAuthenticated, startSession } from "./session.js";
+import { authMiddleware } from "./session.js";
 
 // URL segment of each per-group switch.
 const groupToggles: ReadonlyMap<string, GroupSetting> = new Map([
@@ -125,7 +124,7 @@ function registerListRoutes(app: Express, store: Store, base: string, field: str
 }
 
 // The JSON API behind the dashboard in web/. It serves no pages of its own.
-export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCodeService, blockedLinks: BlockedLinks, bannedWords: BannedWords, reminders: ReminderBoard, approver: JoinApprover, autoReplies: AutoReplies, activity: ActivityRecorder = noActivity): Express {
+export function createAdminApp(bot: SimpleBot, store: Store, blockedLinks: BlockedLinks, bannedWords: BannedWords, reminders: ReminderBoard, approver: JoinApprover, autoReplies: AutoReplies, activity: ActivityRecorder = noActivity): Express {
   const app = express();
   // What an admin does from the dashboard goes into the history, next to what the bot does by itself.
   const logAdmin = (category: ActivityCategory, title: string, more: Omit<NewActivity, "category" | "actor" | "title"> = {}): void => activity.record({ category, actor: "admin", title, ...more });
@@ -166,45 +165,7 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
   });
   app.get("/health", (_request, response) => response.json({ ok: true, ownId: bot.ownId }));
 
-  // Sign-in routes are the only part of the API open to visitors without a session.
-  app.get("/api/auth/session", async (request, response) => {
-    response.json({ authenticated: await isAuthenticated(request, store) });
-  });
-  app.post("/api/auth/code", async (_request, response) => {
-    try {
-      const result = await loginCodes.request();
-      if (!result.sent) {
-        response.status(429).json({ error: `Vừa gửi mã, hãy thử lại sau ${result.retryAfterSeconds} giây` });
-        return;
-      }
-      logAdmin("system", "Gửi mã đăng nhập trang quản trị");
-      response.json({ ok: true });
-    } catch (error: unknown) {
-      console.error("[LOGIN CODE FAILED]", errorMessage(error));
-      logAdmin("system", "Gửi mã đăng nhập trang quản trị", { ok: false, error: errorMessage(error) });
-      response.status(502).json({ error: "Không gửi được mã đăng nhập qua Zalo" });
-    }
-  });
-  app.post("/api/auth/login", async (request, response) => {
-    const body: unknown = request.body;
-    const code = isRecord(body) ? body.code : undefined;
-    const remember = isRecord(body) && body.remember === true;
-    if (typeof code !== "string" || !loginCodes.verify(code)) {
-      response.status(401).json({ error: "Mã không đúng hoặc đã hết hạn" });
-      return;
-    }
-    await startSession(store, response, remember);
-    logAdmin("system", "Đăng nhập trang quản trị");
-    response.json({ ok: true });
-  });
-  app.post("/api/auth/logout", async (request, response) => {
-    // The route is open to visitors, so only a real sign-out is written into the history.
-    const signedIn = await isAuthenticated(request, store);
-    await endSession(store, request, response);
-    if (signedIn) logAdmin("system", "Đăng xuất trang quản trị");
-    response.json({ ok: true });
-  });
-
+  // Signing in is handled by the gate in front of this app; everything here needs a session.
   app.use("/api", authMiddleware(store));
 
   // Every route under a group only works while the account is still in that group. Settings saved
