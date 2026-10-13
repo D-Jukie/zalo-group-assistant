@@ -2,7 +2,7 @@ import express, { type Express, type NextFunction, type Request, type Response }
 import type { SimpleBot } from "../bot/simple-bot.js";
 import type { BannedWords } from "../moderation/banned-words.js";
 import type { BlockedLinks } from "../moderation/blocked-links.js";
-import { parseReminderMessageEdit, parseReminderRequest } from "../reminders/reminder.js";
+import { parseMessageRequest, parseReminderMessageEdit, parseReminderRequest } from "../reminders/reminder.js";
 import type { ReminderBoard } from "../reminders/reminder-board.js";
 import type { Store } from "../storage/store.js";
 import { violationRules, type GroupSetting, type RateRule, type ViolationRule } from "../types.js";
@@ -28,8 +28,8 @@ const violationPageSize = 30;
 const defaultGroupPageSize = 25;
 const maxGroupPageSize = 100;
 const maxSearchLength = 100;
-// Two pictures of up to 5 MB each, written as base64.
-const reminderBodyLimit = "15mb";
+// A reminder's two messages with up to 12 MB of pictures each, written as base64.
+const reminderBodyLimit = "36mb";
 
 function isIntegerBetween(value: unknown, min: number, max: number): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= min && value <= max;
@@ -103,12 +103,13 @@ function registerListRoutes(app: Express, store: Store, base: string, field: str
 export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCodeService, blockedLinks: BlockedLinks, bannedWords: BannedWords, reminders: ReminderBoard): Express {
   const app = express();
   app.disable("x-powered-by");
-  // Requests are small, except the ones that may carry pictures: a new reminder and a change to a
-  // waiting message. Those are read by their own routes, after sign-in.
+  // Requests are small, except the ones that may carry pictures: a new reminder, a new scheduled
+  // message and a change to a waiting message. Those are read by their own routes, after sign-in.
   const readJson = express.json({ limit: "32kb" });
   const readPictures = express.json({ limit: reminderBodyLimit });
   app.use((request, response, next) => {
-    const carriesPictures = (request.method === "POST" && request.path === "/api/reminders") || (request.method === "PATCH" && request.path.startsWith("/api/reminder-messages/"));
+    const carriesPictures = (request.method === "POST" && (request.path === "/api/reminders" || request.path === "/api/reminder-messages"))
+      || (request.method === "PATCH" && request.path.startsWith("/api/reminder-messages/"));
     if (carriesPictures) next();
     else readJson(request, response, next);
   });
@@ -361,8 +362,9 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
     }
   });
 
-  // The messages still waiting for their reminder's time. They are listed on their own, so one whose
-  // reminder was removed in Zalo itself can still be found, changed or cancelled.
+  // The messages still waiting for their time: those that go with a reminder and those scheduled on
+  // their own. They are listed apart from the reminders, so one whose reminder was removed in Zalo
+  // itself can still be found, changed or cancelled.
   app.get("/api/reminder-messages", async (_request, response) => {
     try {
       const names = new Map((await bot.listGroups()).map((group) => [group.groupId, group.name]));
@@ -371,10 +373,25 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
       response.status(502).json({ error: `Không lấy được danh sách nhóm từ Zalo: ${errorMessage(error)}` });
     }
   });
-  app.get("/api/reminder-messages/:messageId/image", async (request, response) => {
-    const image = await store.getReminderMessageImage(request.params.messageId);
+  // A message of the bot's own for several groups, sent at once or scheduled. The answer says what happened in each of them.
+  app.post("/api/reminder-messages", readPictures, async (request, response) => {
+    const parsed = parseMessageRequest(request.body, now());
+    if (typeof parsed === "string") {
+      response.status(400).json({ error: parsed });
+      return;
+    }
+    try {
+      const results = parsed.sendNow ? await reminders.sendMessageNow(parsed.message, parsed.groupIds) : await reminders.scheduleMessage(parsed.message, parsed, parsed.groupIds);
+      response.json({ results });
+    } catch (error: unknown) {
+      response.status(502).json({ error: `Không lấy được danh sách nhóm từ Zalo: ${errorMessage(error)}` });
+    }
+  });
+  app.get("/api/reminder-messages/:messageId/images/:index", async (request, response) => {
+    const index = Number(request.params.index);
+    const image = Number.isInteger(index) && index >= 0 ? await store.getReminderMessageImage(request.params.messageId, index) : undefined;
     if (image === undefined) {
-      response.status(404).json({ error: "Tin nhắn này không có ảnh" });
+      response.status(404).json({ error: "Tin nhắn này không có ảnh đó" });
       return;
     }
     response.type(image.extension === "jpg" ? "image/jpeg" : `image/${image.extension}`).send(image.data);
@@ -388,6 +405,8 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
     const outcome = await store.updateReminderMessage(request.params.messageId, edit);
     if (outcome === "missing") response.status(404).json({ error: "Tin nhắn này không còn chờ gửi" });
     else if (outcome === "empty") response.status(400).json({ error: "Tin nhắn cần có nội dung hoặc ảnh" });
+    else if (outcome === "invalid") response.status(409).json({ error: "Ảnh của tin nhắn đã thay đổi; hãy mở lại để sửa" });
+    else if (outcome === "tooHeavy") response.status(400).json({ error: "Tổng dung lượng ảnh của một tin tối đa 12 MB" });
     else response.json({ ok: true });
   });
   app.delete("/api/reminder-messages/:messageId", async (request, response) => {

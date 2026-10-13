@@ -1,5 +1,5 @@
 import { ReminderRepeatMode, ThreadType, type API } from "zca-js";
-import type { AdminGroupView, GroupReminder, NewReminder, ReminderCreateResult, ReminderList, ReminderMember, ReminderRepeat, ReminderResponses, ScheduledReminderMessage } from "../types.js";
+import type { AdminGroupView, GroupReminder, NewReminder, ReminderMessage, ReminderCreateResult, ReminderList, ReminderMember, ReminderRepeat, ReminderResponses, ScheduledReminderMessage } from "../types.js";
 import { asString, isRecord, now, uniqueStrings } from "../utils.js";
 import { nextOccurrence, parseBoardReminder, sortReminders, type BoardReminder } from "./reminder.js";
 import { sendGroupMessage } from "./reminder-messenger.js";
@@ -109,6 +109,47 @@ export class ReminderBoard {
         this.forget(groupId);
         const warning = await this.sendMessages(reminder, group, created);
         results.push({ groupId, groupName: group.name, ok: true, ...(warning === undefined ? {} : { warning }) });
+      } catch (error: unknown) {
+        results.push({ groupId, groupName: group.name, ok: false, error: errorMessage(error) });
+      }
+    }
+    return results;
+  }
+
+  // Posts a message of the bot's own to each group right away, one group after another.
+  public async sendMessageNow(message: ReminderMessage, groupIds: readonly string[]): Promise<ReminderCreateResult[]> {
+    const groups = new Map((await this.listGroups()).map((group) => [group.groupId, group]));
+    const results: ReminderCreateResult[] = [];
+    for (const [index, groupId] of groupIds.entries()) {
+      const group = groups.get(groupId);
+      if (group === undefined) {
+        results.push({ groupId, groupName: "", ok: false, error: "Bot không ở trong nhóm này hoặc chưa được bật" });
+        continue;
+      }
+      if (index > 0 && this.pauseMs > 0) await new Promise((resolve) => setTimeout(resolve, this.pauseMs));
+      try {
+        await sendGroupMessage(this.api, groupId, message);
+        results.push({ groupId, groupName: group.name, ok: true });
+      } catch (error: unknown) {
+        results.push({ groupId, groupName: group.name, ok: false, error: errorMessage(error) });
+      }
+    }
+    return results;
+  }
+
+  // Queues a message of the bot's own for each group, to go out at `startTime` with no reminder behind it.
+  public async scheduleMessage(message: ReminderMessage, schedule: Readonly<{ startTime: number; repeat: ReminderRepeat }>, groupIds: readonly string[]): Promise<ReminderCreateResult[]> {
+    const groups = new Map((await this.listGroups()).map((group) => [group.groupId, group]));
+    const results: ReminderCreateResult[] = [];
+    for (const groupId of groupIds) {
+      const group = groups.get(groupId);
+      if (group === undefined) {
+        results.push({ groupId, groupName: "", ok: false, error: "Bot không ở trong nhóm này hoặc chưa được bật" });
+        continue;
+      }
+      try {
+        await this.queue.addReminderMessage({ ...message, groupId, reminderId: "", title: "", dueAt: schedule.startTime, startTime: schedule.startTime, repeat: schedule.repeat });
+        results.push({ groupId, groupName: group.name, ok: true });
       } catch (error: unknown) {
         results.push({ groupId, groupName: group.name, ok: false, error: errorMessage(error) });
       }

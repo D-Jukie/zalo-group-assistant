@@ -3,6 +3,7 @@ import { GroupEventType, type GroupInfo } from "zca-js";
 import { defaultKickRules, defaultSpamSettings, violationRules, type DailyViolations, type GroupSetting, type JsonRecord, type KickRule, type KickRules, type MemberViolations, type MessageImage, type PendingReminderMessage, type RecentViolation, type ReminderMessageEdit, type ReminderRepeat, type ScheduledReminderMessage, type SpamSettings, type StoredGroup, type ViolationMatch, type ViolationMessage, type ViolationMessageStatus, type ViolationRule } from "../types.js";
 import type { EncryptedSecret } from "./secret-box.js";
 import { asNumber, asString, escapeRegExp, isRecord, now, uniqueStrings } from "../utils.js";
+import { maxMessageImagesBytes, totalImageBytes } from "../reminders/reminder.js";
 
 type GroupDocument = {
   _id: string;
@@ -68,7 +69,10 @@ type ViolationMessageDocument = {
 
 const violationMessageRetentionDays = 90;
 
-// A message the bot sends when a reminder's time comes. MongoDB hands the picture back as Binary.
+// A picture as it sits in the database: MongoDB hands the bytes back as Binary.
+type StoredImage = Omit<MessageImage, "data"> & { data: Binary | Buffer };
+
+// A message the bot sends when its time comes.
 type ReminderMessageDocument = {
   _id: ObjectId;
   groupId: string;
@@ -76,7 +80,9 @@ type ReminderMessageDocument = {
   // Missing on messages queued before the title was kept.
   title?: string;
   text: string;
-  image?: Omit<MessageImage, "data"> & { data: Binary | Buffer };
+  images?: StoredImage[];
+  // Messages queued when a message could carry only one picture have it here instead.
+  image?: StoredImage;
   dueAt: number;
   startTime: number;
   repeat: ReminderRepeat;
@@ -87,9 +93,16 @@ function toObjectId(id: string): ObjectId | undefined {
   return ObjectId.isValid(id) && id.length === 24 ? new ObjectId(id) : undefined;
 }
 
-function toImage(image: NonNullable<ReminderMessageDocument["image"]>): MessageImage {
+function toImage(image: StoredImage): MessageImage {
   return { ...image, data: Buffer.isBuffer(image.data) ? image.data : Buffer.from(image.data.buffer) };
 }
+
+function storedImages(document: Pick<ReminderMessageDocument, "image" | "images">): StoredImage[] {
+  return document.images ?? (document.image === undefined ? [] : [document.image]);
+}
+
+// Leaves the bytes of the pictures out of what a query returns.
+const withoutImageData = { "image.data": 0, "images.data": 0 } as const;
 
 type SettingDocument = {
   _id: string;
@@ -365,7 +378,7 @@ export class Store {
       reminderId: message.reminderId,
       title: message.title,
       text: message.text,
-      ...(message.image === undefined ? {} : { image: message.image }),
+      ...(message.images === undefined || message.images.length === 0 ? {} : { images: [...message.images] }),
       dueAt: message.dueAt,
       startTime: message.startTime,
       repeat: message.repeat,
@@ -375,37 +388,50 @@ export class Store {
 
   // Every waiting message, soonest first, without the pictures themselves.
   public async listReminderMessages(): Promise<Omit<PendingReminderMessage, "groupName">[]> {
-    const documents = await this.reminderMessages.find({}, { projection: { "image.data": 0 }, sort: { dueAt: 1 } }).toArray();
+    const documents = await this.reminderMessages.find({}, { projection: withoutImageData, sort: { dueAt: 1 } }).toArray();
     return documents.map((document) => ({
       id: document._id.toHexString(),
       groupId: document.groupId,
       reminderId: document.reminderId,
       title: document.title ?? "",
       text: document.text,
-      hasImage: document.image !== undefined,
+      imageCount: storedImages(document).length,
       dueAt: document.dueAt,
       repeat: document.repeat,
       updatedAt: document.updatedAt ?? 0,
     }));
   }
 
-  public async getReminderMessageImage(id: string): Promise<MessageImage | undefined> {
+  // One picture of a waiting message, by its position.
+  public async getReminderMessageImage(id: string, index: number): Promise<MessageImage | undefined> {
     const _id = toObjectId(id);
-    const document = _id === undefined ? null : await this.reminderMessages.findOne({ _id }, { projection: { image: 1 } });
-    return document?.image === undefined ? undefined : toImage(document.image);
+    const document = _id === undefined ? null : await this.reminderMessages.findOne({ _id }, { projection: { image: 1, images: 1 } });
+    const image = document === null ? undefined : storedImages(document)[index];
+    return image === undefined ? undefined : toImage(image);
   }
 
-  // Changes a waiting message. "empty" when the change would leave it with neither text nor a picture.
-  public async updateReminderMessage(id: string, edit: ReminderMessageEdit): Promise<"updated" | "missing" | "empty"> {
+  // Changes a waiting message. "empty" when the change would leave it with neither text nor a picture,
+  // "invalid" when it keeps a picture the message does not have, "tooHeavy" when the pictures together are too large.
+  public async updateReminderMessage(id: string, edit: ReminderMessageEdit): Promise<"updated" | "missing" | "empty" | "invalid" | "tooHeavy"> {
     const _id = toObjectId(id);
-    const current = _id === undefined ? null : await this.reminderMessages.findOne({ _id }, { projection: { "image.data": 0 } });
+    // Kept pictures are written back with the new ones, so their bytes are needed whenever the list changes.
+    const current = _id === undefined ? null : await this.reminderMessages.findOne({ _id }, edit.images === undefined ? { projection: withoutImageData } : {});
     if (_id === undefined || current === null) return "missing";
-    const keepsImage = edit.image === undefined ? current.image !== undefined : edit.image !== null;
-    if (edit.text === "" && !keepsImage) return "empty";
+    const stored = storedImages(current);
     const fields = { text: edit.text, updatedAt: now() };
-    const update: UpdateFilter<ReminderMessageDocument> = edit.image === undefined
-      ? { $set: fields }
-      : edit.image === null ? { $set: fields, $unset: { image: "" } } : { $set: { ...fields, image: edit.image } };
+    if (edit.images === undefined) {
+      if (edit.text === "" && stored.length === 0) return "empty";
+      return (await this.reminderMessages.updateOne({ _id }, { $set: fields })).matchedCount === 1 ? "updated" : "missing";
+    }
+    const images: StoredImage[] = [];
+    for (const item of edit.images) {
+      const image = "keep" in item ? stored[item.keep] : item;
+      if (image === undefined) return "invalid";
+      images.push(image);
+    }
+    if (edit.text === "" && images.length === 0) return "empty";
+    if (totalImageBytes(images.map((image) => ({ data: { length: Buffer.isBuffer(image.data) ? image.data.length : image.data.length() } }))) > maxMessageImagesBytes) return "tooHeavy";
+    const update: UpdateFilter<ReminderMessageDocument> = { $set: { ...fields, images }, $unset: { image: "" } };
     return (await this.reminderMessages.updateOne({ _id }, update)).matchedCount === 1 ? "updated" : "missing";
   }
 
@@ -418,14 +444,14 @@ export class Store {
   public async findDueReminderMessage(at: number): Promise<ScheduledReminderMessage | undefined> {
     const document = await this.reminderMessages.findOne({ dueAt: { $lte: at } }, { sort: { dueAt: 1 } });
     if (document === null) return undefined;
-    const { image } = document;
+    const images = storedImages(document).map(toImage);
     return {
       id: document._id.toHexString(),
       groupId: document.groupId,
       reminderId: document.reminderId,
       title: document.title ?? "",
       text: document.text,
-      ...(image === undefined ? {} : { image: toImage(image) }),
+      ...(images.length === 0 ? {} : { images }),
       dueAt: document.dueAt,
       startTime: document.startTime,
       repeat: document.repeat,

@@ -17,15 +17,20 @@ type MessageStore = Readonly<{
   claimReminderMessage(message: ScheduledReminderMessage, nextDueAt: number | null): Promise<boolean>;
 }>;
 
-// Posts a message, with its picture when it has one, to a group.
+// Posts a message, with its pictures when it has any, to a group. Several pictures go out as one album;
+// Zalo then shows the text as a message of its own rather than as a caption.
 export async function sendGroupMessage(api: MessageApi, groupId: string, message: ReminderMessage): Promise<void> {
-  const { image } = message;
-  if (image === undefined) {
+  const images = message.images ?? [];
+  if (images.length === 0) {
     await api.sendMessage({ msg: message.text }, groupId, ThreadType.Group);
     return;
   }
-  const attachment = { data: image.data, filename: `nhac-hen.${image.extension}` as const, metadata: { totalSize: image.data.length, width: image.width, height: image.height } };
-  await api.sendMessage({ msg: message.text, attachments: [attachment] }, groupId, ThreadType.Group);
+  const attachments = images.map((image, index) => ({
+    data: image.data,
+    filename: `nhac-hen-${index + 1}.${image.extension}` as const,
+    metadata: { totalSize: image.data.length, width: image.width, height: image.height },
+  }));
+  await api.sendMessage({ msg: message.text, attachments }, groupId, ThreadType.Group);
 }
 
 // Sends the messages that were asked to go out when a reminder's time comes. Unlike the reminder

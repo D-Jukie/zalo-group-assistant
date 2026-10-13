@@ -1,4 +1,4 @@
-import { reminderRepeats, type GroupReminder, type MessageImage, type NewReminder, type ReminderMessage, type ReminderMessageEdit, type ReminderRepeat } from "../types.js";
+import { maxMessageImages, reminderRepeats, type GroupReminder, type MessageImage, type NewReminder, type ReminderMessage, type ReminderMessageEdit, type ReminderRepeat } from "../types.js";
 import { asNumber, asString, isRecord, uniqueStrings } from "../utils.js";
 import { readImageInfo } from "./image-size.js";
 
@@ -6,6 +6,8 @@ export const maxReminderTitleLength = 200;
 export const maxReminderGroups = 100;
 export const maxMessageLength = 2000;
 export const maxImageBytes = 5 * 1024 * 1024;
+// All the pictures of one message together. A queued message is one MongoDB document, which holds 16 MB.
+export const maxMessageImagesBytes = 12 * 1024 * 1024;
 
 const dayMs = 24 * 60 * 60 * 1000;
 
@@ -13,6 +15,14 @@ const dayMs = 24 * 60 * 60 * 1000;
 export type BoardReminder = Omit<GroupReminder, "nextTime" | "dueMessage">;
 
 export type ReminderRequest = NewReminder & Readonly<{ groupIds: readonly string[] }>;
+
+// A message of the bot's own for several groups, with no reminder behind it: sent at once, or at a set time.
+export type MessageRequest = Readonly<{ message: ReminderMessage; groupIds: readonly string[] }> & (
+  | Readonly<{ sendNow: true }>
+  | Readonly<{ sendNow: false; startTime: number; repeat: ReminderRepeat }>
+);
+
+type Schedule = Readonly<{ startTime: number; repeat: ReminderRepeat; groupIds: readonly string[] }>;
 
 // Zalo sends the title inside "params", sometimes as an object and sometimes as JSON text.
 function readTitle(params: unknown): string {
@@ -99,28 +109,72 @@ function parseMessageImage(value: unknown): MessageImage | string {
   return info === undefined ? "Ảnh phải là JPEG, PNG hoặc WebP" : { data, ...info };
 }
 
-// Reads a change to a waiting message: { text, image?: { data: <base64> } | null }. Whether the result
-// still has text or a picture can only be judged against the stored message, so that is checked there.
+// Reads the pictures of a message: at most maxMessageImages of them, each read by `parseItem`.
+function parseImageList<T>(value: unknown, parseItem: (item: unknown) => T | string): T[] | string {
+  if (!Array.isArray(value)) return "Danh sách ảnh không hợp lệ";
+  if (value.length > maxMessageImages) return `Mỗi tin nhắn tối đa ${maxMessageImages} ảnh`;
+  const images: T[] = [];
+  for (const item of value as unknown[]) {
+    const image = parseItem(item);
+    if (typeof image === "string") return image;
+    images.push(image);
+  }
+  return images;
+}
+
+export function totalImageBytes(images: readonly Readonly<{ data: { length: number } }>[]): number {
+  return images.reduce((sum, image) => sum + image.data.length, 0);
+}
+
+const tooHeavy = "Tổng dung lượng ảnh của một tin tối đa 12 MB";
+
+// Reads a change to a waiting message: { text, images?: ({ data: <base64> } | { keep: <position> })[] }.
+// Whether the result still has text or a picture, and what "keep" refers to, can only be judged
+// against the stored message, so that is checked there.
 export function parseReminderMessageEdit(body: unknown): ReminderMessageEdit | string {
   if (!isRecord(body) || typeof body.text !== "string") return "Tin nhắn không hợp lệ";
   const text = body.text.trim();
   if (text.length > maxMessageLength) return `Tin nhắn dài tối đa ${maxMessageLength} ký tự`;
-  if (body.image === undefined) return { text };
-  if (body.image === null) return { text, image: null };
-  const image = parseMessageImage(body.image);
-  return typeof image === "string" ? image : { text, image };
+  if (body.images === undefined) return { text };
+  const images = parseImageList(body.images, (item): MessageImage | Readonly<{ keep: number }> | string => {
+    const keep = isRecord(item) ? item.keep : undefined;
+    return typeof keep === "number" && Number.isInteger(keep) && keep >= 0 ? { keep } : parseMessageImage(item);
+  });
+  return typeof images === "string" ? images : { text, images };
 }
 
-// Reads one of the optional messages of a reminder request: { text, image?: { data: <base64> } }.
+// Reads one of the optional messages of a reminder request: { text, images?: { data: <base64> }[] }.
 // Returns the message, undefined when none was asked for, or the reason it is not acceptable.
 export function parseReminderMessage(value: unknown): ReminderMessage | undefined | string {
   if (value === undefined || value === null) return undefined;
   if (!isRecord(value)) return "Tin nhắn không hợp lệ";
   const text = typeof value.text === "string" ? value.text.trim() : "";
   if (text.length > maxMessageLength) return `Tin nhắn dài tối đa ${maxMessageLength} ký tự`;
-  if (value.image === undefined || value.image === null) return text === "" ? "Tin nhắn cần có nội dung hoặc ảnh" : { text };
-  const image = parseMessageImage(value.image);
-  return typeof image === "string" ? image : { text, image };
+  const images = value.images === undefined || value.images === null ? [] : parseImageList(value.images, parseMessageImage);
+  if (typeof images === "string") return images;
+  if (totalImageBytes(images) > maxMessageImagesBytes) return tooHeavy;
+  if (images.length === 0) return text === "" ? "Tin nhắn cần có nội dung hoặc ảnh" : { text };
+  return { text, images };
+}
+
+// The groups a request is for: at least one, each named once.
+function parseGroupIds(rawGroupIds: unknown): readonly string[] | string {
+  if (!Array.isArray(rawGroupIds) || !rawGroupIds.every((item): item is string => typeof item === "string")) return "Danh sách nhóm không hợp lệ";
+  const groupIds = uniqueStrings(rawGroupIds);
+  if (groupIds.length === 0) return "Hãy chọn ít nhất một nhóm";
+  if (groupIds.length > maxReminderGroups) return `Mỗi lần chỉ chọn được tối đa ${maxReminderGroups} nhóm`;
+  return groupIds;
+}
+
+// The part every scheduling request shares: when, how often and for which groups.
+function parseSchedule(body: Record<string, unknown>, at: number, what: string): Schedule | string {
+  const startTime = body.startTime;
+  if (typeof startTime !== "number" || !Number.isSafeInteger(startTime)) return `Thời gian ${what} không hợp lệ`;
+  if (startTime <= at) return `Thời gian ${what} phải ở tương lai`;
+  const repeat = reminderRepeats.find((item) => item === body.repeat);
+  if (repeat === undefined) return "Kiểu lặp lại không hợp lệ";
+  const groupIds = parseGroupIds(body.groupIds);
+  return typeof groupIds === "string" ? groupIds : { startTime, repeat, groupIds };
 }
 
 // Checks what the dashboard sent for a new reminder. Returns the request, or the reason it is not acceptable.
@@ -128,19 +182,26 @@ export function parseReminderRequest(body: unknown, at: number): ReminderRequest
   if (!isRecord(body)) return "Thiếu nội dung nhắc hẹn";
   const title = typeof body.title === "string" ? body.title.trim() : "";
   if (title === "" || title.length > maxReminderTitleLength) return `Nội dung phải dài từ 1 đến ${maxReminderTitleLength} ký tự`;
-  const startTime = body.startTime;
-  if (typeof startTime !== "number" || !Number.isSafeInteger(startTime)) return "Thời gian nhắc không hợp lệ";
-  if (startTime <= at) return "Thời gian nhắc phải ở tương lai";
-  const repeat = reminderRepeats.find((item) => item === body.repeat);
-  if (repeat === undefined) return "Kiểu lặp lại không hợp lệ";
-  const rawGroupIds: unknown = body.groupIds;
-  if (!Array.isArray(rawGroupIds) || !rawGroupIds.every((item): item is string => typeof item === "string")) return "Danh sách nhóm không hợp lệ";
-  const groupIds = uniqueStrings(rawGroupIds);
-  if (groupIds.length === 0) return "Hãy chọn ít nhất một nhóm";
-  if (groupIds.length > maxReminderGroups) return `Mỗi lần chỉ tạo được cho tối đa ${maxReminderGroups} nhóm`;
+  const schedule = parseSchedule(body, at, "nhắc");
+  if (typeof schedule === "string") return schedule;
   const onCreate = parseReminderMessage(body.onCreate);
   if (typeof onCreate === "string") return `Tin nhắn khi tạo: ${onCreate}`;
   const onDue = parseReminderMessage(body.onDue);
   if (typeof onDue === "string") return `Tin nhắn khi đến giờ: ${onDue}`;
-  return { title, startTime, repeat, groupIds, ...(onCreate === undefined ? {} : { onCreate }), ...(onDue === undefined ? {} : { onDue }) };
+  return { title, ...schedule, ...(onCreate === undefined ? {} : { onCreate }), ...(onDue === undefined ? {} : { onDue }) };
+}
+
+// Checks a request to send a message to several groups: { message, groupIds } with either
+// sendNow: true, or startTime and repeat for a message that waits for its time.
+export function parseMessageRequest(body: unknown, at: number): MessageRequest | string {
+  if (!isRecord(body)) return "Thiếu nội dung tin nhắn";
+  const message = parseReminderMessage(body.message);
+  if (message === undefined) return "Thiếu nội dung tin nhắn";
+  if (typeof message === "string") return message;
+  if (body.sendNow === true) {
+    const groupIds = parseGroupIds(body.groupIds);
+    return typeof groupIds === "string" ? groupIds : { message, groupIds, sendNow: true };
+  }
+  const schedule = parseSchedule(body, at, "gửi");
+  return typeof schedule === "string" ? schedule : { message, ...schedule, sendNow: false };
 }

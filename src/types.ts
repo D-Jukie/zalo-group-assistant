@@ -164,8 +164,11 @@ export type ReminderList = Readonly<{
 // A picture to send with a message. The kind and size are read from the file itself.
 export type MessageImage = Readonly<{ data: Buffer; extension: "jpg" | "png" | "webp"; width: number; height: number }>;
 
-// A message the bot posts to the group alongside a reminder: text, a picture, or both.
-export type ReminderMessage = Readonly<{ text: string; image?: MessageImage }>;
+// How many pictures one message may carry. Zalo shows several as one album.
+export const maxMessageImages = 6;
+
+// A message the bot posts to a group: text, pictures, or both.
+export type ReminderMessage = Readonly<{ text: string; images?: readonly MessageImage[] }>;
 
 export type NewReminder = Readonly<{
   title: string;
@@ -177,7 +180,8 @@ export type NewReminder = Readonly<{
   onDue?: ReminderMessage;
 }>;
 
-// A message waiting for its reminder's time.
+// A message waiting for its time: that of the reminder it goes with, or, when `reminderId` is empty,
+// simply the time it was scheduled for.
 export type ScheduledReminderMessage = ReminderMessage & Readonly<{
   id: string;
   groupId: string;
@@ -199,14 +203,15 @@ export type PendingReminderMessage = Readonly<{
   reminderId: string;
   title: string;
   text: string;
-  hasImage: boolean;
+  imageCount: number;
   dueAt: number;
   repeat: ReminderRepeat;
   updatedAt: number;
 }>;
 
-// A change to a waiting message. `image`: a new picture, null to remove the picture, or left out to keep it.
-export type ReminderMessageEdit = Readonly<{ text: string; image?: MessageImage | null }>;
+// A change to a waiting message. `images`, when given, is the whole new list in order: each entry a new
+// picture, or `keep` with the position of a picture the message already has. Left out, the pictures stay.
+export type ReminderMessageEdit = Readonly<{ text: string; images?: readonly (MessageImage | Readonly<{ keep: number }>)[] }>;
 
 // `warning` is set when the reminder was created but one of its messages could not be sent or scheduled.
 export type ReminderCreateResult = Readonly<{ groupId: string; groupName: string; ok: boolean; error?: string; warning?: string }>;

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AdminGroupView, ScheduledReminderMessage, StoredGroup } from "../types.js";
 import { readImageInfo } from "./image-size.js";
-import { parseReminderMessage, parseReminderMessageEdit, parseReminderRequest } from "./reminder.js";
+import { parseMessageRequest, parseReminderMessage, parseReminderMessageEdit, parseReminderRequest } from "./reminder.js";
 import { ReminderBoard } from "./reminder-board.js";
 import { ReminderMessenger } from "./reminder-messenger.js";
 
@@ -45,10 +45,15 @@ await test("reads the kind and size of a picture from the file itself", () => {
 await test("reads the optional messages of a reminder request", () => {
   assert.equal(parseReminderMessage(undefined), undefined);
   assert.deepEqual(parseReminderMessage({ text: "  Nhớ tham gia nhé  " }), { text: "Nhớ tham gia nhé" });
-  const withImage = parseReminderMessage({ text: "", image: { data: png(10, 20).toString("base64") } });
-  assert.ok(typeof withImage === "object");
-  assert.deepEqual({ text: withImage.text, extension: withImage.image?.extension, width: withImage.image?.width, height: withImage.image?.height }, { text: "", extension: "png", width: 10, height: 20 });
-  for (const invalid of ["text", { text: "   " }, { text: "a".repeat(2001) }, { text: "x", image: { data: Buffer.from("not a picture").toString("base64") } }, { text: "x", image: {} }]) {
+  const picture = (width: number, height: number) => ({ data: png(width, height).toString("base64") });
+  const withImages = parseReminderMessage({ text: "", images: [picture(10, 20), { data: jpeg(30, 40).toString("base64") }] });
+  assert.ok(typeof withImages === "object");
+  assert.equal(withImages.text, "");
+  assert.deepEqual(withImages.images?.map((image) => [image.extension, image.width, image.height]), [["png", 10, 20], ["jpg", 30, 40]]);
+  // An empty list of pictures is the same as none.
+  assert.deepEqual(parseReminderMessage({ text: "x", images: [] }), { text: "x" });
+  assert.equal(typeof parseReminderMessage({ text: "x", images: Array.from({ length: 6 }, () => picture(2, 2)) }), "object");
+  for (const invalid of ["text", { text: "   " }, { text: "", images: [] }, { text: "a".repeat(2001) }, { text: "x", images: [{ data: Buffer.from("not a picture").toString("base64") }] }, { text: "x", images: [{}] }, { text: "x", images: "one" }, { text: "x", images: Array.from({ length: 7 }, () => picture(2, 2)) }]) {
     assert.equal(typeof parseReminderMessage(invalid), "string");
   }
 });
@@ -62,13 +67,45 @@ await test("a reminder request carries its messages, and says which one is wrong
   assert.match(refusal({ ...base, onDue: { text: "" } }), /^Tin nhắn khi đến giờ: /u);
 });
 
+await test("checks a request to schedule a message on its own", () => {
+  const now = 1_000_000;
+  const valid = { message: { text: " Thông báo nghỉ lễ " }, startTime: now + 60_000, repeat: "weekly", groupIds: ["g1", "g2", "g1"] };
+  assert.deepEqual(parseMessageRequest(valid, now), { message: { text: "Thông báo nghỉ lễ" }, startTime: now + 60_000, repeat: "weekly", groupIds: ["g1", "g2"], sendNow: false });
+  // Sent at once, a message needs no time.
+  assert.deepEqual(parseMessageRequest({ message: { text: "Gửi ngay" }, groupIds: ["g1"], sendNow: true }, now), { message: { text: "Gửi ngay" }, groupIds: ["g1"], sendNow: true });
+  assert.equal(typeof parseMessageRequest({ message: { text: "Gửi ngay" }, groupIds: [], sendNow: true }, now), "string");
+  for (const invalid of [null, { ...valid, message: undefined }, { ...valid, message: { text: "" } }, { ...valid, startTime: now }, { ...valid, repeat: "yearly" }, { ...valid, groupIds: [] }]) {
+    assert.equal(typeof parseMessageRequest(invalid, now), "string");
+  }
+});
+
+await test("a message scheduled on its own is queued for each switched-on group", async () => {
+  const queued: Omit<ScheduledReminderMessage, "id">[] = [];
+  const queue = { addReminderMessage: (message: Omit<ScheduledReminderMessage, "id">) => { queued.push(message); return Promise.resolve(); }, removeReminderMessages: () => Promise.resolve(), listReminderMessageKeys: () => Promise.resolve(new Set<string>()) };
+  const board = new ReminderBoard({} as ConstructorParameters<typeof ReminderBoard>[0], { ownId: "bot", listGroups: () => Promise.resolve([{ groupId: "g1", name: "Nhóm g1", botEnabled: true }, { groupId: "g9", name: "Nhóm tắt", botEnabled: false }] as AdminGroupView[]) }, queue, 0);
+  const results = await board.scheduleMessage({ text: "Thông báo" }, { startTime: 5_000_000, repeat: "daily" }, ["g1", "g9"]);
+  assert.deepEqual(results.map((item) => [item.groupId, item.ok]), [["g1", true], ["g9", false]]);
+  assert.deepEqual(queued, [{ text: "Thông báo", groupId: "g1", reminderId: "", title: "", dueAt: 5_000_000, startTime: 5_000_000, repeat: "daily" }]);
+});
+
+await test("a message sent at once goes to each switched-on group, and one failure does not stop the rest", async () => {
+  const sent: string[] = [];
+  const api = { sendMessage: (_content: unknown, groupId: string) => { sent.push(groupId); return groupId === "g2" ? Promise.reject(new Error("Nhóm đã khóa gửi tin")) : Promise.resolve({}); } } as unknown as ConstructorParameters<typeof ReminderBoard>[0];
+  const allGroups = { ownId: "bot", listGroups: () => Promise.resolve(["g1", "g2", "g3"].map((groupId) => ({ groupId, name: `Nhóm ${groupId}`, botEnabled: true }) as AdminGroupView)) };
+  const queue = { addReminderMessage: () => Promise.resolve(), removeReminderMessages: () => Promise.resolve(), listReminderMessageKeys: () => Promise.resolve(new Set<string>()) };
+  const results = await new ReminderBoard(api, allGroups, queue, 0).sendMessageNow({ text: "Thông báo" }, ["g1", "g2", "nope", "g3"]);
+  assert.deepEqual(results.map((item) => [item.groupId, item.ok, item.error ?? null]), [["g1", true, null], ["g2", false, "Nhóm đã khóa gửi tin"], ["nope", false, "Bot không ở trong nhóm này hoặc chưa được bật"], ["g3", true, null]]);
+  assert.deepEqual(sent, ["g1", "g2", "g3"]);
+});
+
 await test("reads a change to a waiting message", () => {
   assert.deepEqual(parseReminderMessageEdit({ text: "  Đổi nội dung  " }), { text: "Đổi nội dung" });
-  assert.deepEqual(parseReminderMessageEdit({ text: "", image: null }), { text: "", image: null });
-  const replaced = parseReminderMessageEdit({ text: "x", image: { data: png(8, 6).toString("base64") } });
-  assert.ok(typeof replaced === "object" && replaced.image !== null && replaced.image !== undefined);
-  assert.deepEqual([replaced.image.extension, replaced.image.width, replaced.image.height], ["png", 8, 6]);
-  for (const invalid of [null, {}, { text: 5 }, { text: "a".repeat(2001) }, { text: "x", image: { data: "bm9wZQ==" } }]) {
+  assert.deepEqual(parseReminderMessageEdit({ text: "", images: [] }), { text: "", images: [] });
+  // The new list mixes pictures the message already has with new ones, in the order they should be sent.
+  const changed = parseReminderMessageEdit({ text: "x", images: [{ keep: 1 }, { data: png(8, 6).toString("base64") }, { keep: 0 }] });
+  assert.ok(typeof changed === "object" && changed.images !== undefined);
+  assert.deepEqual(changed.images.map((image) => "keep" in image ? image.keep : [image.extension, image.width, image.height]), [1, ["png", 8, 6], 0]);
+  for (const invalid of [null, {}, { text: 5 }, { text: "a".repeat(2001) }, { text: "x", images: [{ data: "bm9wZQ==" }] }, { text: "x", images: [{ keep: -1 }] }, { text: "x", images: Array.from({ length: 7 }, () => ({ keep: 0 })) }]) {
     assert.equal(typeof parseReminderMessageEdit(invalid), "string");
   }
 });
@@ -89,8 +126,8 @@ await test("creating a reminder posts its first message and queues the one for i
     },
   } as unknown as ConstructorParameters<typeof ReminderBoard>[0];
   const queue = { addReminderMessage: (message: Omit<ScheduledReminderMessage, "id">) => { queued.push(message); return Promise.resolve(); }, removeReminderMessages: () => Promise.resolve(), listReminderMessageKeys: () => Promise.resolve(new Set<string>()) };
-  const image = { data: png(4, 4), extension: "png" as const, width: 4, height: 4 };
-  const results = await new ReminderBoard(api, groups, queue, 0).create({ title: "Họp", startTime: 5_000_000, repeat: "weekly", onCreate: { text: "Vừa tạo nhắc hẹn", image }, onDue: { text: "Đến giờ họp" } }, ["g1", "g2"]);
+  const images = [{ data: png(4, 4), extension: "png" as const, width: 4, height: 4 }, { data: jpeg(8, 6), extension: "jpg" as const, width: 8, height: 6 }];
+  const results = await new ReminderBoard(api, groups, queue, 0).create({ title: "Họp", startTime: 5_000_000, repeat: "weekly", onCreate: { text: "Vừa tạo nhắc hẹn", images }, onDue: { text: "Đến giờ họp" } }, ["g1", "g2"]);
 
   assert.deepEqual(results, [
     { groupId: "g1", groupName: "Nhóm g1", ok: true },
@@ -99,7 +136,7 @@ await test("creating a reminder posts its first message and queues the one for i
   const [content, threadId] = sent[0] as [{ msg: string; attachments: { filename: string; metadata: unknown }[] }, string];
   assert.equal(threadId, "g1");
   assert.equal(content.msg, "Vừa tạo nhắc hẹn");
-  assert.deepEqual(content.attachments.map((item) => [item.filename, item.metadata]), [["nhac-hen.png", { totalSize: 24, width: 4, height: 4 }]]);
+  assert.deepEqual(content.attachments.map((item) => [item.filename, item.metadata]), [["nhac-hen-1.png", { totalSize: 24, width: 4, height: 4 }], ["nhac-hen-2.jpg", { totalSize: jpeg(8, 6).length, width: 8, height: 6 }]]);
   assert.deepEqual(queued.map((item) => [item.groupId, item.reminderId, item.text, item.dueAt, item.repeat]), [
     ["g1", "r-g1", "Đến giờ họp", 5_000_000, "weekly"],
     ["g2", "board-g2", "Đến giờ họp", 5_000_000, "weekly"],
