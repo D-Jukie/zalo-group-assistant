@@ -2,11 +2,13 @@
 
 import { ImageIcon, Plus } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import useSWR from "swr";
 import { errorText, send } from "@/lib/api";
 import { cn, formatDateTime, formatNumber } from "@/lib/format";
 import type { AutoReplyKind, AutoReplyMatch, AutoReplyRule, Group, ReminderGroup } from "@/lib/types";
+import { CommandGroups } from "./command-groups";
 import { ConfirmDialog } from "./confirm-dialog";
 import { dataUrlPayload, MessageEditor, pickedPictureView, type PickedImage, type PictureView } from "./reminder-message-field";
 import { GroupPicker } from "./schedule-fields";
@@ -189,16 +191,41 @@ function Editor({ rule, groups, fixedGroupId, onClose, onSaved }: { rule: AutoRe
 
 type BulkAction = "enable" | "disable" | "delete";
 
-// The page of automatic answers: all of them, for every group.
+const pageTabs = [
+  { value: "answers", label: "Câu trả lời" },
+  { value: "commands", label: "Lệnh có sẵn" },
+] as const;
+const pageDescription = "Bot trả lời khi thành viên nhắn đúng từ khóa hoặc gõ một lệnh như /huongdan. Chỉ áp dụng ở nhóm đang bật bot.";
+
+// The page of automatic answers: the answers written by the admin, for every group, and in a second
+// tab the commands the bot knows by itself. The open tab lives in the address.
 export function AutoRepliesView() {
-  return <AutoReplyManager />;
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const tab = pageTabs.find((item) => item.value === searchParams.get("tab"))?.value ?? "answers";
+  const tabs = (
+    <div role="group" aria-label="Phần của trang" className="mb-4 inline-flex gap-1 rounded-md border border-border bg-surface p-1">
+      {pageTabs.map((item) => (
+        <button key={item.value} type="button" aria-pressed={tab === item.value} onClick={() => router.replace(item.value === "answers" ? pathname : `${pathname}?tab=${item.value}`, { scroll: false })} className={choiceClass(tab === item.value)}>{item.label}</button>
+      ))}
+    </div>
+  );
+  if (tab === "answers") return <AutoReplyManager tabs={tabs} />;
+  return (
+    <>
+      <PageHeader title="Trả lời tự động" description={pageDescription} />
+      {tabs}
+      <CommandGroups />
+    </>
+  );
 }
 
 // The answers the bot gives by itself: what sets each one off, what it says, where it applies and how
 // often it has answered. Tick several to switch them on or off or to remove them together.
 // With `group` it is that group's own part of the list, shown on the group's page: answers made here
 // belong to the group, and the answers shared by every group are listed underneath for reference.
-export function AutoReplyManager({ group }: { group?: Group }) {
+export function AutoReplyManager({ group, tabs }: { group?: Group; tabs?: ReactNode }) {
   const { data: allRules, error, mutate } = useSWR<AutoReplyRule[]>("/auto-replies");
   const rules = group === undefined ? allRules : allRules?.filter((rule) => rule.groupIds.includes(group.groupId));
   const shared = group === undefined ? [] : (allRules ?? []).filter((rule) => rule.groupIds.length === 0);
@@ -235,7 +262,7 @@ export function AutoReplyManager({ group }: { group?: Group }) {
       {group === undefined ? (
         <PageHeader
           title="Trả lời tự động"
-          description="Bot trả lời khi thành viên nhắn đúng từ khóa hoặc gõ một lệnh như /huongdan. Chỉ áp dụng ở nhóm đang bật bot."
+          description={pageDescription}
           action={
             <Button variant="primary" onClick={() => setEditing("new")}>
               <Plus aria-hidden="true" className="size-4" />
@@ -244,6 +271,7 @@ export function AutoReplyManager({ group }: { group?: Group }) {
           }
         />
       ) : null}
+      {tabs}
       <Card>
         {group === undefined ? null : (
           <CardHeader
