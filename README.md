@@ -74,6 +74,14 @@ Tab `Thành viên` của trang `/group/<id>` có bảng `Danh sách thành viên
 - Tìm theo tên (không dấu cũng được) hoặc một phần ID; sắp xếp theo tên, theo số vi phạm, hoặc theo tài khoản mới tạo nhất. Trưởng nhóm rồi tới các phó nhóm luôn đứng đầu bảng, cách sắp xếp chỉ áp dụng bên trong từng nhóm vai trò. Bot thực hiện việc tìm, sắp xếp và chia trang (20 dòng mỗi trang).
 - Bot nhớ hồ sơ thành viên của mỗi nhóm trong 5 phút và đọc lại khi nhóm có thay đổi; nút `Làm mới` đọc lại ngay. Nếu Zalo chỉ trả về một phần thành viên của nhóm lớn, bảng ghi rõ danh sách chưa đầy đủ.
 
+**Thao tác trên thành viên.** Tick một hoặc nhiều dòng của bảng (lựa chọn được giữ khi chuyển trang hoặc tìm kiếm) rồi chọn:
+
+- `Xóa khỏi nhóm`: đưa thành viên ra khỏi nhóm trên Zalo; họ vẫn vào lại được nếu được mời hoặc có link nhóm.
+- `Xóa và chặn`: xóa khỏi nhóm và chặn không cho vào lại. Tài khoản bị chặn hiện ở thẻ `Tài khoản bị chặn` ngay dưới bảng, kèm nút `Bỏ chặn`.
+- `Xóa vi phạm`: xóa số lần vi phạm và tin đã lưu của họ trong nhóm; họ vẫn ở trong nhóm.
+
+Hai thao tác đầu chỉ có khi bot là trưởng hoặc phó nhóm. Bot và trưởng nhóm không tick được; phó nhóm chỉ bị xóa được khi bot là trưởng nhóm. Thao tác nào cũng hỏi lại trước khi làm, và thành viên nào không xử lý được sẽ được liệt kê kèm lý do. Thành viên bị xóa bằng tay ở đây không tính vào số `Đã kick`, vốn chỉ đếm những lần bot tự kick theo quy tắc.
+
 ### Tìm trong nhật ký vi phạm
 
 Trang `/violations` tìm và lọc ngay trên bot, nên kết quả tính trên toàn bộ nhật ký chứ không chỉ những tin đã tải về:
@@ -92,6 +100,7 @@ Các danh sách và bảng đều đánh số thứ tự. Những danh sách có
 | Lịch nhắc hẹn (`/reminders`) | `Xuất Excel` (một file gồm phản hồi của mọi nhắc hẹn đã chọn), `Xóa` |
 | Tin nhắn chờ gửi (`/broadcast`) | `Hủy tin nhắn` |
 | Link bị chặn, từ cấm (chung và riêng của nhóm) | `Xóa mục đã chọn` |
+| Thành viên của một nhóm | `Xóa khỏi nhóm`, `Xóa và chặn`, `Xóa vi phạm` |
 | Thống kê vi phạm của một nhóm | `Xóa thống kê` của các thành viên đã chọn |
 
 Thao tác xóa và rời nhóm đều hỏi lại trước khi làm. Bot xử lý lần lượt từng dòng và báo kết quả; dòng nào lỗi được liệt kê kèm lý do, các dòng còn lại vẫn được xử lý.
