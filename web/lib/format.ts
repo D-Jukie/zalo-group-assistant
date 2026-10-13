@@ -3,6 +3,8 @@ const numberFormat = new Intl.NumberFormat(locale);
 const dateTimeFormat = new Intl.DateTimeFormat(locale, { dateStyle: "short", timeStyle: "short" });
 const dayFormat = new Intl.DateTimeFormat(locale, { day: "numeric", month: "numeric" });
 const longDayFormat = new Intl.DateTimeFormat(locale, { weekday: "long", day: "numeric", month: "numeric" });
+const clockFormat = new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" });
+const fullDayFormat = new Intl.DateTimeFormat(locale, { weekday: "long", day: "numeric", month: "numeric", year: "numeric" });
 const relativeFormat = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
 
 export function formatNumber(value: number): string {
@@ -17,6 +19,40 @@ export function formatDateTime(timestamp: number): string {
 export function formatDay(isoDate: string, style: "short" | "long" = "short"): string {
   const [year = 0, month = 1, day = 1] = isoDate.split("-").map(Number);
   return (style === "short" ? dayFormat : longDayFormat).format(new Date(year, month - 1, day));
+}
+
+// "09:30"
+export function formatClock(timestamp: number): string {
+  return clockFormat.format(timestamp);
+}
+
+// "2026-10-12T09:30", the value a datetime-local field takes, in the viewer's time zone.
+export function toLocalInput(timestamp: number): string {
+  const date = new Date(timestamp);
+  return `${localDayKey(timestamp)}T${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+// "Hôm nay lúc 08:15", "Ngày mai lúc 09:00", or the full day for anything further away.
+export function formatFriendlyDateTime(timestamp: number, now: number): string {
+  const day = localDayKey(timestamp);
+  const prefix = day === localDayKey(now) ? "Hôm nay" : day === localDayKey(now + 86_400_000) ? "Ngày mai" : formatFullDay(timestamp);
+  return `${prefix} lúc ${formatClock(timestamp)}`;
+}
+
+// "Thứ Hai, 12/10/2026"
+export function formatFullDay(timestamp: number): string {
+  return fullDayFormat.format(timestamp);
+}
+
+// The calendar day a moment falls on in the viewer's time zone, as "2026-10-12".
+export function localDayKey(timestamp: number): string {
+  const date = new Date(timestamp);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+// Lower case without Vietnamese diacritics, so "nhom ban hang" finds "Nhóm bán hàng".
+export function foldText(text: string): string {
+  return text.normalize("NFD").replace(/\p{M}/gu, "").replace(/đ/giu, "d").toLowerCase();
 }
 
 export function formatRelative(timestamp: number, now = Date.now()): string {

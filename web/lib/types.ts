@@ -93,3 +93,61 @@ export type MemberViolations = {
   lastRule: ViolationRule;
   lastAt: number;
 };
+
+export const reminderRepeats = ["none", "daily", "weekly", "monthly"] as const;
+
+export type ReminderRepeat = (typeof reminderRepeats)[number];
+
+export const reminderRepeatLabels: Record<ReminderRepeat, string> = { none: "Không lặp lại", daily: "Hằng ngày", weekly: "Hằng tuần", monthly: "Hằng tháng" };
+
+// A reminder on a group's Zalo board, whoever created it.
+export type GroupReminder = {
+  reminderId: string;
+  groupId: string;
+  groupName: string;
+  title: string;
+  emoji: string;
+  startTime: number;
+  repeat: ReminderRepeat;
+  // When it goes off next; null once a reminder that does not repeat has passed.
+  nextTime: number | null;
+  creatorId: string;
+  createdByBot: boolean;
+  createdAt: number;
+  accepted: number;
+  rejected: number;
+  // Whether the bot still has a message of its own to send when this reminder's time comes.
+  dueMessage: boolean;
+};
+
+export type ReminderList = {
+  items: GroupReminder[];
+  groupCount: number;
+  failed: { groupId: string; groupName: string; error: string }[];
+  fetchedAt: number;
+};
+
+// A group a reminder can be created in.
+export type ReminderGroup = { groupId: string; name: string; memberCount: number };
+
+// A message the bot still has to send when its reminder's time comes. The picture is fetched separately.
+export type PendingReminderMessage = {
+  id: string;
+  groupId: string;
+  groupName: string;
+  reminderId: string;
+  // What the reminder says.
+  title: string;
+  text: string;
+  hasImage: boolean;
+  dueAt: number;
+  repeat: ReminderRepeat;
+  updatedAt: number;
+};
+
+// `warning` is set when the reminder was created but one of its messages could not be sent or scheduled.
+export type ReminderCreateResult = { groupId: string; groupName: string; ok: boolean; error?: string; warning?: string };
+
+export type ReminderMember = { userId: string; name: string };
+
+export type ReminderResponses = { accepted: ReminderMember[]; rejected: ReminderMember[] };
