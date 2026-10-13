@@ -1,7 +1,7 @@
 import { maxMessageImages, type AutoReplyDraft, type AutoReplyKind, type AutoReplyMatch, type AutoReplyRule, type MessageImage } from "../types.js";
 import { isRecord, uniqueStrings } from "../utils.js";
 import { readImageInfo } from "../reminders/image-size.js";
-import { maxImageBytes, maxMessageImagesBytes, maxMessageLength, totalImageBytes } from "../reminders/reminder.js";
+import { maxImageBytes, maxMessageImagesBytes, maxMessageLength, messageText, totalImageBytes } from "../reminders/reminder.js";
 
 export const maxTriggers = 10;
 export const maxTriggerLength = 60;
@@ -107,7 +107,7 @@ export function parseAutoReply(body: unknown): AutoReplyDraft | string {
   const distinct = uniqueStrings(triggers);
   if (distinct.length === 0) return kind === "command" ? "Hãy nhập ít nhất một lệnh" : "Hãy nhập ít nhất một từ khóa";
   if (distinct.length > maxTriggers) return `Tối đa ${maxTriggers} ${kind === "command" ? "lệnh" : "từ khóa"} cho một câu trả lời`;
-  const text = typeof body.text === "string" ? body.text.trim() : "";
+  const text = typeof body.text === "string" ? messageText(body.text) : "";
   if (text.length > maxMessageLength) return `Câu trả lời dài tối đa ${maxMessageLength} ký tự`;
   const rawImages: unknown = body.images ?? [];
   if (!Array.isArray(rawImages)) return "Danh sách ảnh không hợp lệ";

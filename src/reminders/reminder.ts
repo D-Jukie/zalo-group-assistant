@@ -1,4 +1,5 @@
 import { maxMessageImages, reminderRepeats, type GroupReminder, type MessageImage, type NewReminder, type ReminderMessage, type ReminderMessageEdit, type ReminderRepeat } from "../types.js";
+import { plainText } from "../message-format.js";
 import { asNumber, asString, isRecord, uniqueStrings } from "../utils.js";
 import { readImageInfo } from "./image-size.js";
 
@@ -128,12 +129,18 @@ export function totalImageBytes(images: readonly Readonly<{ data: { length: numb
 
 const tooHeavy = "Tổng dung lượng ảnh của một tin tối đa 12 MB";
 
+// A message's text as it is kept: trimmed, and empty when it holds formatting tags around nothing.
+export function messageText(input: string): string {
+  const text = input.trim();
+  return plainText(text).trim() === "" ? "" : text;
+}
+
 // Reads a change to a waiting message: { text, images?: ({ data: <base64> } | { keep: <position> })[] }.
 // Whether the result still has text or a picture, and what "keep" refers to, can only be judged
 // against the stored message, so that is checked there.
 export function parseReminderMessageEdit(body: unknown): ReminderMessageEdit | string {
   if (!isRecord(body) || typeof body.text !== "string") return "Tin nhắn không hợp lệ";
-  const text = body.text.trim();
+  const text = messageText(body.text);
   if (text.length > maxMessageLength) return `Tin nhắn dài tối đa ${maxMessageLength} ký tự`;
   if (body.images === undefined) return { text };
   const images = parseImageList(body.images, (item): MessageImage | Readonly<{ keep: number }> | string => {
@@ -148,7 +155,7 @@ export function parseReminderMessageEdit(body: unknown): ReminderMessageEdit | s
 export function parseReminderMessage(value: unknown): ReminderMessage | undefined | string {
   if (value === undefined || value === null) return undefined;
   if (!isRecord(value)) return "Tin nhắn không hợp lệ";
-  const text = typeof value.text === "string" ? value.text.trim() : "";
+  const text = typeof value.text === "string" ? messageText(value.text) : "";
   if (text.length > maxMessageLength) return `Tin nhắn dài tối đa ${maxMessageLength} ký tự`;
   const images = value.images === undefined || value.images === null ? [] : parseImageList(value.images, parseMessageImage);
   if (typeof images === "string") return images;

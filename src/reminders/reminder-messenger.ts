@@ -2,6 +2,7 @@ import { ThreadType, type API } from "zca-js";
 import { noActivity, previewText, type ActivityRecorder } from "../activity/activity-log.js";
 import { writeLog } from "../logger.js";
 import type { ReminderMessage, ScheduledReminderMessage, StoredGroup } from "../types.js";
+import { messageContent } from "../message-format.js";
 import { now } from "../utils.js";
 import { nextOccurrence } from "./reminder.js";
 
@@ -22,8 +23,9 @@ type MessageStore = Readonly<{
 // Zalo then shows the text as a message of its own rather than as a caption.
 export async function sendGroupMessage(api: MessageApi, groupId: string, message: ReminderMessage): Promise<void> {
   const images = message.images ?? [];
+  const content = messageContent(message.text);
   if (images.length === 0) {
-    await api.sendMessage({ msg: message.text }, groupId, ThreadType.Group);
+    await api.sendMessage(content, groupId, ThreadType.Group);
     return;
   }
   const attachments = images.map((image, index) => ({
@@ -31,7 +33,13 @@ export async function sendGroupMessage(api: MessageApi, groupId: string, message
     filename: `nhac-hen-${index + 1}.${image.extension}` as const,
     metadata: { totalSize: image.data.length, width: image.width, height: image.height },
   }));
-  await api.sendMessage({ msg: message.text, attachments }, groupId, ThreadType.Group);
+  // A caption cannot carry styles, so a styled text goes out as a message of its own, before the pictures.
+  if (content.styles !== undefined && content.msg !== "") {
+    await api.sendMessage(content, groupId, ThreadType.Group);
+    await api.sendMessage({ msg: "", attachments }, groupId, ThreadType.Group);
+    return;
+  }
+  await api.sendMessage({ ...content, attachments }, groupId, ThreadType.Group);
 }
 
 // Sends the messages that were asked to go out when a reminder's time comes. Unlike the reminder

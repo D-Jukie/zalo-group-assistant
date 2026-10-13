@@ -1,3 +1,4 @@
+import { plainText } from "../message-format.js";
 import { writeLog } from "../logger.js";
 import { activityActors, activityCategories, type ActivityCategory, type ActivityFilter, type NewActivity, type StoredGroup } from "../types.js";
 
@@ -19,7 +20,8 @@ export type ActivityStore = Readonly<{
 
 // The start of a message, on one line, for the detail of an entry.
 export function previewText(text: string, imageCount = 0): string {
-  const line = text.replace(/\s+/gu, " ").trim();
+  // Formatting tags from the dashboard's editor are left out: the history shows the words.
+  const line = plainText(text).replace(/\s+/gu, " ").trim();
   const short = line.length > maxPreviewLength ? `${line.slice(0, maxPreviewLength)}…` : line;
   const images = imageCount > 0 ? `${imageCount} ảnh` : "";
   return [short === "" ? "" : `“${short}”`, images].filter((part) => part !== "").join(" + ");

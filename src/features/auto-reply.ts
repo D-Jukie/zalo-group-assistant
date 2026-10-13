@@ -1,4 +1,5 @@
-import { ThreadType, type API } from "zca-js";
+import { ThreadType, type API, type Style } from "zca-js";
+import { messageContent } from "../message-format.js";
 import { noActivity, previewText, type ActivityRecorder } from "../activity/activity-log.js";
 import type { AutoReplies } from "../auto-reply/auto-replies.js";
 import { memberAnswer, numberAnswer, parseRandomCommand, pickDistinct, pickNumber } from "../auto-reply/random-command.js";
@@ -55,7 +56,9 @@ export class AutoReplyFeature implements BotFeature {
       if (rule.imageCount > 0) {
         await sendGroupMessage(this.api, context.groupId, { text: rule.text, images: await this.replies.images(rule.id) });
       } else {
-        await this.sendText(rule.text, context);
+        // The answer was written in the dashboard's editor, so its formatting tags are read here.
+        const content = messageContent(rule.text);
+        await this.sendText(content.msg, context, content.mentions, content.styles);
       }
       await this.replies.recordSent(rule.id, at);
       writeLog("[AUTO REPLY]", "cyan", fields);
@@ -111,8 +114,8 @@ export class AutoReplyFeature implements BotFeature {
   }
 
   // A text answer quotes the message it answers. If Zalo refuses the quote, the answer still goes out plain.
-  private async sendText(text: string, context: GroupMessageContext, mentions: readonly Mention[] = []): Promise<void> {
-    const message = mentions.length === 0 ? { msg: text } : { msg: text, mentions: [...mentions] };
+  private async sendText(text: string, context: GroupMessageContext, mentions: readonly Mention[] = [], styles: readonly Style[] = []): Promise<void> {
+    const message = { msg: text, ...(mentions.length === 0 ? {} : { mentions: [...mentions] }), ...(styles.length === 0 ? {} : { styles: [...styles] }) };
     try {
       await this.api.sendMessage({ ...message, quote: context.message.data }, context.groupId, ThreadType.Group);
     } catch {

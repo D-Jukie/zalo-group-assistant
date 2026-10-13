@@ -1,8 +1,10 @@
 "use client";
 
-import { ImagePlus, X } from "lucide-react";
-import { useId, useRef, useState, type DragEvent } from "react";
+import { AtSign, Bold, ImagePlus, Italic, Strikethrough, Underline, X } from "lucide-react";
+import { useId, useRef, useState, type DragEvent, type MouseEvent } from "react";
 import { cn, formatNumber } from "@/lib/format";
+import { allMembersTag, hasFormatting, tagColors, type FormatTag } from "@/lib/message-format";
+import { FormattedText } from "./formatted-text";
 
 export const maxMessageLength = 2000;
 // How many pictures one message may carry, and how heavy they may be together.
@@ -103,6 +105,32 @@ export function MessageEditor({ text, onTextChange, pictures, onPick, onRemovePi
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
 
+  const textArea = useRef<HTMLTextAreaElement>(null);
+
+  // Puts `before` and `after` around what is selected in the text, or around the caret, and then
+  // selects what is between them again. Nothing happens when the result would be too long.
+  function surround(before: string, after: string) {
+    const field = textArea.current;
+    const start = field?.selectionStart ?? text.length;
+    const end = field?.selectionEnd ?? text.length;
+    const next = `${text.slice(0, start)}${before}${text.slice(start, end)}${after}${text.slice(end)}`;
+    if (next.length > maxMessageLength) return;
+    onTextChange(next);
+    // The field only holds the new text after the change above has rendered.
+    requestAnimationFrame(() => {
+      field?.focus();
+      field?.setSelectionRange(start + before.length, end + before.length);
+    });
+  }
+
+  function wrap(tag: FormatTag) {
+    surround(`[${tag}]`, `[/${tag}]`);
+  }
+
+  function insert(piece: string) {
+    surround(piece, "");
+  }
+
   // Only a drag that carries files is of interest; dragged text is left to the browser.
   function carriesFiles(event: DragEvent): boolean {
     return event.dataTransfer.types.includes("Files");
@@ -175,7 +203,9 @@ export function MessageEditor({ text, onTextChange, pictures, onPick, onRemovePi
         Nội dung tin nhắn
         <span className="text-xs tabular-nums">{formatNumber(text.length)}/{formatNumber(maxMessageLength)}</span>
       </label>
+      <FormatToolbar onWrap={wrap} onInsert={insert} />
       <textarea
+        ref={textArea}
         id={`${id}-text`}
         rows={3}
         maxLength={maxMessageLength}
@@ -192,6 +222,12 @@ export function MessageEditor({ text, onTextChange, pictures, onPick, onRemovePi
         }}
         className="w-full min-w-0 resize-y rounded-md border border-border-strong bg-surface px-3 py-2 text-sm placeholder:text-subtle"
       />
+      {hasFormatting(text) ? (
+        <div className="rounded-md border border-border bg-background px-3 py-2">
+          <p className="mb-1 text-xs text-muted">Xem trước</p>
+          <p className="whitespace-pre-wrap break-words text-sm"><FormattedText text={text} /></p>
+        </div>
+      ) : null}
       {/* The file field itself stays out of sight; the button and the previews stand in for it. */}
       <input
         ref={fileInput}
@@ -243,6 +279,36 @@ export function MessageEditor({ text, onTextChange, pictures, onPick, onRemovePi
         <span className="shrink-0 text-xs tabular-nums text-muted">{reading ? "Đang xử lý ảnh…" : `${formatNumber(pictures.length)}/${maxMessageImages} ảnh`}</span>
       </div>
       <p role="status" aria-live="polite" className={cn("text-sm text-danger", imageError === undefined && "sr-only")}>{imageError ?? ""}</p>
+    </div>
+  );
+}
+
+const toolButton = "inline-flex h-7 min-w-7 items-center justify-center rounded px-1.5 text-sm text-muted transition-colors hover:bg-surface-hover hover:text-foreground";
+const colorNames: Readonly<Record<string, string>> = { red: "đỏ", orange: "cam", yellow: "vàng", green: "xanh lá" };
+
+// The formatting Zalo has for a message: select some text and press a button, or press it first and type between the tags.
+function FormatToolbar({ onWrap, onInsert }: { onWrap: (tag: FormatTag) => void; onInsert: (piece: string) => void }) {
+  // The buttons must not take the selection away from the text before they have read it.
+  const keepSelection = { onMouseDown: (event: MouseEvent) => event.preventDefault() };
+  return (
+    <div role="toolbar" aria-label="Định dạng tin nhắn" className="flex flex-wrap items-center gap-0.5 rounded-md border border-border bg-background p-1">
+      <button type="button" {...keepSelection} onClick={() => onWrap("b")} aria-label="In đậm" title="In đậm" className={toolButton}><Bold aria-hidden="true" className="size-4" /></button>
+      <button type="button" {...keepSelection} onClick={() => onWrap("i")} aria-label="In nghiêng" title="In nghiêng" className={toolButton}><Italic aria-hidden="true" className="size-4" /></button>
+      <button type="button" {...keepSelection} onClick={() => onWrap("u")} aria-label="Gạch chân" title="Gạch chân" className={toolButton}><Underline aria-hidden="true" className="size-4" /></button>
+      <button type="button" {...keepSelection} onClick={() => onWrap("s")} aria-label="Gạch ngang" title="Gạch ngang" className={toolButton}><Strikethrough aria-hidden="true" className="size-4" /></button>
+      <span aria-hidden="true" className="mx-1 h-4 w-px bg-border" />
+      <button type="button" {...keepSelection} onClick={() => onWrap("small")} aria-label="Chữ nhỏ" title="Chữ nhỏ" className={cn(toolButton, "text-xs font-medium")}>A</button>
+      <button type="button" {...keepSelection} onClick={() => onWrap("big")} aria-label="Chữ lớn" title="Chữ lớn" className={cn(toolButton, "text-base font-medium")}>A</button>
+      <span aria-hidden="true" className="mx-1 h-4 w-px bg-border" />
+      {(["red", "orange", "yellow", "green"] as const).map((tag) => (
+        <button key={tag} type="button" {...keepSelection} onClick={() => onWrap(tag)} aria-label={`Chữ màu ${colorNames[tag]}`} title={`Chữ màu ${colorNames[tag]}`} className={toolButton}>
+          <span aria-hidden="true" className="size-3.5 rounded-full" style={{ backgroundColor: tagColors[tag] }} />
+        </button>
+      ))}
+      <span aria-hidden="true" className="mx-1 h-4 w-px bg-border" />
+      <button type="button" {...keepSelection} onClick={() => onInsert(`${allMembersTag} `)} title="Nhắc tất cả thành viên của nhóm" className={cn(toolButton, "gap-1 font-medium")}>
+        <AtSign aria-hidden="true" className="size-4" />All
+      </button>
     </div>
   );
 }

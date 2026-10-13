@@ -10,6 +10,7 @@ import { cn, formatDateTime, formatNumber } from "@/lib/format";
 import type { AutoReplyKind, AutoReplyMatch, AutoReplyRule, Group, ReminderGroup } from "@/lib/types";
 import { CommandGroups } from "./command-groups";
 import { ConfirmDialog } from "./confirm-dialog";
+import { FormattedText } from "./formatted-text";
 import { dataUrlPayload, MessageEditor, pickedPictureView, type PickedImage, type PictureView } from "./reminder-message-field";
 import { GroupPicker } from "./schedule-fields";
 import { RowCheckbox, RowNumber, SelectAllCheckbox, SelectionBar, useSelection } from "./selection";
@@ -341,7 +342,7 @@ export function AutoReplyManager({ group, tabs }: { group?: Group; tabs?: ReactN
                             {rule.imageCount > 1 ? <span aria-hidden="true" className="absolute -bottom-1.5 -right-1.5 rounded-full border border-border-strong bg-surface px-1 text-xs font-medium tabular-nums shadow-sm">+{rule.imageCount - 1}</span> : null}
                           </span>
                         ) : null}
-                        {rule.text ? <span className="line-clamp-3 min-w-0 whitespace-pre-wrap break-words">{rule.text}</span> : <span className="flex items-center gap-1.5 text-subtle"><ImageIcon aria-hidden="true" className="size-4" />Chỉ có ảnh</span>}
+                        {rule.text ? <span className="line-clamp-3 min-w-0 whitespace-pre-wrap break-words"><FormattedText text={rule.text} /></span> : <span className="flex items-center gap-1.5 text-subtle"><ImageIcon aria-hidden="true" className="size-4" />Chỉ có ảnh</span>}
                       </span>
                     </td>
                     <td className="truncate px-5 py-3 align-top" title={rule.groupIds.map((groupId) => groupNames.get(groupId) ?? groupId).join(", ") || undefined}>{scopeLabel(rule)}</td>
@@ -375,7 +376,7 @@ export function AutoReplyManager({ group, tabs }: { group?: Group; tabs?: ReactN
                 <span className="flex min-w-0 flex-1 basis-48 flex-wrap gap-1.5">
                   {rule.triggers.map((trigger) => <code key={trigger} className="max-w-full truncate rounded border border-border bg-background px-1.5 py-0.5 font-mono text-xs" translate="no">{trigger}</code>)}
                 </span>
-                <span className="line-clamp-2 min-w-0 flex-[2] basis-64 whitespace-pre-wrap break-words">{rule.text || `${formatNumber(rule.imageCount)} ảnh`}</span>
+                <span className="line-clamp-2 min-w-0 flex-[2] basis-64 whitespace-pre-wrap break-words">{rule.text ? <FormattedText text={rule.text} /> : `${formatNumber(rule.imageCount)} ảnh`}</span>
                 <span className="flex shrink-0 gap-1.5">
                   <Badge>{rule.kind === "command" ? kindLabels.command : matchLabels[rule.match]}</Badge>
                   {rule.enabled ? null : <Badge>Đang tắt</Badge>}

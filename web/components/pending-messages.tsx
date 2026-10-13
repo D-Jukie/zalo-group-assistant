@@ -8,6 +8,7 @@ import { errorText, send } from "@/lib/api";
 import { formatFriendlyDateTime, formatNumber } from "@/lib/format";
 import { reminderRepeatLabels, type PendingReminderMessage, type ReminderList } from "@/lib/types";
 import { ConfirmDialog } from "./confirm-dialog";
+import { FormattedText } from "./formatted-text";
 import { dataUrlPayload, MessageEditor, pickedPictureView, type PickedImage, type PictureView } from "./reminder-message-field";
 import { RowCheckbox, RowNumber, SelectAllCheckbox, SelectionBar, useSelection } from "./selection";
 import { useToast } from "./toast";
@@ -192,7 +193,7 @@ export function PendingMessages() {
                   <span aria-hidden="true" className="grid size-14 shrink-0 place-items-center rounded-md border border-dashed border-border text-subtle"><ImageIcon className="size-5" /></span>
                 )}
                 <div className="min-w-0 flex-1 basis-64">
-                  {message.text ? <p className="line-clamp-3 whitespace-pre-wrap break-words text-sm">{message.text}</p> : <p className="text-sm text-subtle">Chỉ có ảnh, không có chữ</p>}
+                  {message.text ? <p className="line-clamp-3 whitespace-pre-wrap break-words text-sm"><FormattedText text={message.text} /></p> : <p className="text-sm text-subtle">Chỉ có ảnh, không có chữ</p>}
                   <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
                     <span className="tabular-nums font-medium">{now === undefined ? "…" : formatFriendlyDateTime(message.dueAt, now)}</span>
                     <span aria-hidden="true" className="text-subtle">·</span>

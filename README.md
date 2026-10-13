@@ -227,6 +227,22 @@ Bot dùng tính năng `Nhắc hẹn` có sẵn của Zalo, nên thành viên th�
 
 Chỉ nhóm đang bật bot mới được đọc và chọn. Bot nhớ tạm bảng nhắc hẹn của mỗi nhóm trong 5 phút và đọc lại ngay khi nhóm đó có thay đổi; nút `Làm mới` đọc lại mọi nhóm. Nhóm tắt quyền tạo nhắc hẹn của thành viên sẽ báo lỗi nếu bot không phải trưởng/phó nhóm. Nhắc hẹn của Zalo chỉ có giờ bắt đầu, không có giờ kết thúc.
 
+## Định dạng tin nhắn
+
+Ô soạn tin ở ba nơi (`/broadcast`, tin nhắn của nhắc hẹn ở `/reminders/new`, và câu trả lời ở `/auto-replies`) có một thanh định dạng: bôi đen đoạn chữ rồi bấm nút, hoặc bấm nút trước rồi gõ vào giữa hai thẻ. Khung `Xem trước` bên dưới hiện tin nhắn như nhóm sẽ thấy.
+
+| Nút | Thẻ trong nội dung | Ghi chú |
+|---|---|---|
+| In đậm, in nghiêng, gạch chân, gạch ngang | `[b]…[/b]`, `[i]…[/i]`, `[u]…[/u]`, `[s]…[/s]` | |
+| Chữ nhỏ, chữ lớn | `[small]…[/small]`, `[big]…[/big]` | Zalo chỉ có hai cỡ này ngoài cỡ thường |
+| Màu chữ | `[red]…`, `[orange]…`, `[yellow]…`, `[green]…` | Zalo chỉ có bốn màu này |
+| `@All` | `[all]` | Nhắc tất cả thành viên của nhóm |
+
+- Nội dung được lưu nguyên cả thẻ; bot chỉ đổi thẻ thành định dạng của Zalo lúc gửi. Thẻ được tính vào giới hạn 2.000 ký tự.
+- Các thẻ lồng vào nhau được (`[b][red]gấp[/red][/b]`). Thẻ thiếu thẻ mở hoặc thẻ đóng thì được gửi đi như chữ thường.
+- Chú thích ảnh của Zalo không mang được định dạng, nên tin có định dạng kèm ảnh được gửi thành hai tin: chữ trước, ảnh sau.
+- Zalo có thể từ chối `@All` khi tài khoản bot không có quyền nhắc cả nhóm; khi đó tin không gửi được và lỗi được ghi vào lịch sử hoạt động.
+
 ## Trả lời tự động
 
 Trang `/auto-replies` (mục riêng ở sidebar) đặt sẵn những câu bot tự trả lời trong nhóm. Mỗi câu trả lời gồm thứ kích hoạt nó, nội dung trả lời và nơi áp dụng:
