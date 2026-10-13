@@ -9,6 +9,7 @@ import { ApiError, errorText, send } from "@/lib/api";
 import { formatDateTime, formatKickRule, formatNumber, splitWindow, windowUnits } from "@/lib/format";
 import { ruleLabels, totalViolations, violationRules, type Group, type GroupToggle, type KickRule, type MemberViolations, type RateRule, type SpamSettings, type ViolationMessage, type ViolationRule } from "@/lib/types";
 import { ConfirmDialog } from "./confirm-dialog";
+import { GroupMembers } from "./group-members";
 import { ListManager } from "./list-manager";
 import { RowCheckbox, RowNumber, SelectAllCheckbox, SelectionBar, useSelection } from "./selection";
 import { useToast } from "./toast";
@@ -480,6 +481,7 @@ export function GroupView({ groupId }: { groupId: string }) {
           <SettingsCards group={group} onChange={applyChange} />
           <GroupLists group={group} />
         </div>
+        <GroupMembers group={group} />
         <Statistics group={group} />
       </div>
     </>

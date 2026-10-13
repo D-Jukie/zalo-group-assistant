@@ -147,6 +147,24 @@ export type PendingReminderMessage = {
   updatedAt: number;
 };
 
+// A row of a group's member list.
+export type GroupMember = {
+  userId: string;
+  name: string;
+  avatar: string;
+  // When the Zalo account was created; null when Zalo does not say.
+  accountCreatedAt: number | null;
+  role: "owner" | "admin" | "member";
+  isBot: boolean;
+  // All-time violations in this group, and how often the bot removed them from it.
+  violations: number;
+  kicks: number;
+};
+
+// One page of a group's members, already searched and sorted by the bot. `complete` is false when
+// Zalo only handed over part of a large group's member list.
+export type MemberPage = { items: GroupMember[]; total: number; page: number; pageSize: number; memberCount: number; complete: boolean };
+
 // What a bulk action did to one group.
 export type GroupActionResult = { groupId: string; groupName: string; ok: boolean; error?: string };
 

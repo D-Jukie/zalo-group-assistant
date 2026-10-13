@@ -5,6 +5,7 @@ const dayFormat = new Intl.DateTimeFormat(locale, { day: "numeric", month: "nume
 const longDayFormat = new Intl.DateTimeFormat(locale, { weekday: "long", day: "numeric", month: "numeric" });
 const clockFormat = new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" });
 const fullDayFormat = new Intl.DateTimeFormat(locale, { weekday: "long", day: "numeric", month: "numeric", year: "numeric" });
+const dateFormat = new Intl.DateTimeFormat(locale, { day: "2-digit", month: "2-digit", year: "numeric" });
 const relativeFormat = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
 
 export function formatNumber(value: number): string {
@@ -19,6 +20,20 @@ export function formatDateTime(timestamp: number): string {
 export function formatDay(isoDate: string, style: "short" | "long" = "short"): string {
   const [year = 0, month = 1, day = 1] = isoDate.split("-").map(Number);
   return (style === "short" ? dayFormat : longDayFormat).format(new Date(year, month - 1, day));
+}
+
+// "09/09/2026"
+export function formatDate(timestamp: number): string {
+  return dateFormat.format(timestamp);
+}
+
+// How long ago something began, in the largest unit that fits: "34 ngày", "7 tháng", "5 năm".
+export function formatAge(timestamp: number, now: number): string {
+  const days = Math.max(0, Math.floor((now - timestamp) / 86_400_000));
+  if (days < 1) return "hôm nay";
+  if (days < 60) return `${days} ngày`;
+  if (days < 730) return `${Math.floor(days / 30)} tháng`;
+  return `${Math.floor(days / 365)} năm`;
 }
 
 // "09:30"
