@@ -49,12 +49,13 @@ Dashboard là ứng dụng Next.js (App Router, Tailwind CSS, SWR) trong `web/`.
 | `/login` | Đăng nhập bằng mã gửi qua Zalo |
 | `/dashboard` | Thông tin bot, các con số tổng quan, biểu đồ vi phạm 14 ngày, 20 tin vi phạm gần nhất |
 | `/groups` | Danh sách nhóm, có công tắc bật tắt bot cho từng nhóm, tìm kiếm, bộ lọc và phân trang (lưu trên URL). Bot thực hiện việc tìm, lọc và chia trang; ô tìm chờ 250ms sau khi ngừng gõ rồi mới gửi yêu cầu, và tìm được theo tên không dấu, hoặc theo ID nhóm khi gõ từ 6 chữ số trở lên |
-| `/group/<id>` | Công tắc bật bot và các con số của nhóm ở đầu trang, rồi bốn tab: `Tính năng` (từng tính năng kèm danh sách riêng và cài đặt kick của nó, và duyệt thành viên tự động), `Thành viên`, `Chờ duyệt`, `Vi phạm` (thống kê theo thành viên và tin vi phạm đã lưu) |
+| `/group/<id>` | Công tắc bật bot và các con số của nhóm ở đầu trang, rồi năm tab: `Tính năng` (từng tính năng kèm danh sách riêng và cài đặt kick của nó, và duyệt thành viên tự động), `Trả lời tự động` (câu trả lời riêng của nhóm), `Thành viên`, `Chờ duyệt`, `Vi phạm` (thống kê theo thành viên và tin vi phạm đã lưu) |
 | `/features` | Cài đặt dùng chung của từng tính năng (Chặn link, Lọc từ cấm, Chống spam): danh sách link và từ cấm chung, ô thử một câu, mô tả chống spam |
 | `/violations` | Nhật ký vi phạm trên mọi nhóm: tìm theo tên thành viên, nội dung tin, link hoặc tên nhóm; lọc theo quy tắc, kết quả xử lý và khoảng ngày giờ; tải thêm tin cũ hơn |
 | `/reminders` | Lịch nhắc hẹn của Zalo ở mọi nhóm đang bật bot: nội dung, giờ bắt đầu, số người tham gia và từ chối, danh sách thành viên đã trả lời |
 | `/reminders/new` | Tạo một nhắc hẹn cho một hoặc nhiều nhóm cùng lúc |
 | `/broadcast` | Gửi tin nhắn hàng loạt: một tin của bot cho một hoặc nhiều nhóm, gửi ngay hoặc hẹn giờ |
+| `/auto-replies` | Trả lời tự động: bot trả lời khi thành viên nhắn một từ khóa hoặc gõ một lệnh như `/huongdan` |
 | `/setting` | Cài đặt của chính bảng điều khiển: sáng/tối, tự làm mới, số nhóm mỗi trang, kết nối tới bot, đăng xuất |
 
 Trang `/setting` không chứa cài đặt của bot. Những gì chọn ở đó chỉ lưu trên trình duyệt đang dùng.
@@ -99,6 +100,7 @@ Các danh sách và bảng đều đánh số thứ tự. Những danh sách có
 | Nhóm (`/groups`) | `Bật bot`, `Tắt bot`, `Rời nhóm`. Lựa chọn được giữ khi chuyển trang hoặc tìm kiếm |
 | Lịch nhắc hẹn (`/reminders`) | `Xuất Excel` (một file gồm phản hồi của mọi nhắc hẹn đã chọn), `Xóa` |
 | Tin nhắn chờ gửi (`/broadcast`) | `Hủy tin nhắn` |
+| Trả lời tự động (`/auto-replies`) | `Bật`, `Tắt`, `Xóa` |
 | Link bị chặn, từ cấm (chung và riêng của nhóm) | `Xóa mục đã chọn` |
 | Thành viên của một nhóm | `Xóa khỏi nhóm`, `Xóa và chặn`, `Xóa vi phạm` |
 | Thống kê vi phạm của một nhóm | `Xóa thống kê` của các thành viên đã chọn |
@@ -214,6 +216,25 @@ Bot dùng tính năng `Nhắc hẹn` có sẵn của Zalo, nên thành viên th�
 - **Xóa:** nút `Xóa` gỡ nhắc hẹn khỏi nhóm trên Zalo.
 
 Chỉ nhóm đang bật bot mới được đọc và chọn. Bot nhớ tạm bảng nhắc hẹn của mỗi nhóm trong 5 phút và đọc lại ngay khi nhóm đó có thay đổi; nút `Làm mới` đọc lại mọi nhóm. Nhóm tắt quyền tạo nhắc hẹn của thành viên sẽ báo lỗi nếu bot không phải trưởng/phó nhóm. Nhắc hẹn của Zalo chỉ có giờ bắt đầu, không có giờ kết thúc.
+
+## Trả lời tự động
+
+Trang `/auto-replies` (mục riêng ở sidebar) đặt sẵn những câu bot tự trả lời trong nhóm. Mỗi câu trả lời gồm thứ kích hoạt nó, nội dung trả lời và nơi áp dụng:
+
+| Kích hoạt bằng | Bot trả lời khi |
+|---|---|
+| Từ khóa, `Chính xác` | cả tin nhắn đúng bằng từ khóa |
+| Từ khóa, `Có chứa` | từ khóa nằm ở đâu trong tin nhắn cũng được, miễn là đứng thành từ riêng (`giá` không khớp `giám đốc`) |
+| Lệnh, ví dụ `/huongdan` | lệnh là từ đầu tiên của tin nhắn; phần gõ sau lệnh được bỏ qua |
+
+- Một câu trả lời có thể có tối đa 10 từ khóa hoặc lệnh. So khớp không phân biệt hoa thường và khoảng trắng thừa. Từ khóa gõ không dấu cũng khớp với chữ có dấu (`huong dan` khớp `hướng dẫn`); gõ có dấu thì chỉ khớp đúng dấu đó. Lệnh chỉ gồm chữ, số, gạch dưới, gạch ngang.
+- Nội dung trả lời là chữ (tối đa 2000 ký tự), tối đa 6 ảnh, hoặc cả hai, soạn bằng cùng ô soạn tin với phần gửi tin hàng loạt. Câu trả lời chỉ có chữ được gửi kèm trích dẫn tin nhắn của thành viên.
+- Áp dụng cho mọi nhóm đang bật bot, hoặc chỉ những nhóm được chọn. Nhóm tắt bot không bao giờ được trả lời.
+- Mỗi câu trả lời có `thời gian nghỉ` (mặc định 10 giây): trong khoảng đó nó chỉ trả lời một lần ở mỗi nhóm, để một từ khóa hay gặp không làm bot nhắn dồn dập. Đặt 0 để trả lời mọi lần.
+- **Câu trả lời riêng của nhóm:** tab `Trả lời tự động` trên trang `/group/<id>` quản lý những câu chỉ dùng ở nhóm đó, với cùng bảng và hộp soạn như trang chung; câu tạo ở đó tự gắn với nhóm. Bên dưới là danh sách `Câu trả lời chung` (chỉ để xem) vì chúng cũng trả lời ở nhóm này.
+- Khi một tin khớp nhiều câu trả lời, bot chỉ gửi một: lệnh trước, rồi từ khóa `Chính xác`, rồi `Có chứa`; cùng loại thì câu riêng của nhóm được dùng trước câu chung (nên một nhóm có thể có câu trả lời riêng cho cùng một lệnh), rồi tới câu tạo trước.
+- Bot chỉ xét tin nhắn chữ do thành viên gõ, không xét chú thích ảnh hay nội dung của link. Trưởng nhóm và phó nhóm nhắn cũng được trả lời.
+- Bảng ghi số lần mỗi câu đã được dùng và lần gần nhất. Có công tắc bật tắt cho từng câu, và chọn nhiều để bật, tắt hoặc xóa một lần.
 
 ## Duyệt thành viên
 
