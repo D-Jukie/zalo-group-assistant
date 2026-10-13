@@ -65,6 +65,22 @@ Dashboard chỉ hiện những nhóm tài khoản bot **đang ở trong**. Danh 
 
 Giao diện mặc định theo sáng/tối của hệ điều hành; có thể chọn cố định ở trang `/setting`.
 
+### Chọn nhiều và thao tác một lần
+
+Các danh sách và bảng đều đánh số thứ tự. Những danh sách có thao tác thì có thêm ô tick ở mỗi dòng và ô `Chọn tất cả`; khi có dòng được tick, thanh thao tác nổi lên ở một vị trí cố định sát đáy cửa sổ:
+
+| Danh sách | Thao tác cho các dòng đã chọn |
+|---|---|
+| Nhóm (`/groups`) | `Bật bot`, `Tắt bot`, `Rời nhóm`. Lựa chọn được giữ khi chuyển trang hoặc tìm kiếm |
+| Lịch nhắc hẹn (`/reminders`) | `Xuất Excel` (một file gồm phản hồi của mọi nhắc hẹn đã chọn), `Xóa` |
+| Tin nhắn chờ gửi (`/broadcast`) | `Hủy tin nhắn` |
+| Link bị chặn, từ cấm (chung và riêng của nhóm) | `Xóa mục đã chọn` |
+| Thống kê vi phạm của một nhóm | `Xóa thống kê` của các thành viên đã chọn |
+
+Thao tác xóa và rời nhóm đều hỏi lại trước khi làm. Bot xử lý lần lượt từng dòng và báo kết quả; dòng nào lỗi được liệt kê kèm lý do, các dòng còn lại vẫn được xử lý.
+
+`Rời nhóm` đưa tài khoản bot ra khỏi nhóm trên Zalo. Nhóm mà bot đang là trưởng nhóm không rời được: phải chuyển quyền trưởng nhóm cho người khác trên Zalo trước, nên các nhóm đó được bỏ qua và nêu tên trong hộp xác nhận. Sau khi rời, cài đặt của nhóm vẫn nằm trong MongoDB, còn tin nhắn đang chờ gửi vào nhóm bị hủy.
+
 ## Cấu hình
 
 ```text
