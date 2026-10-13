@@ -86,6 +86,16 @@ export class SimpleBot {
     return (await this.memberGroupIds()).has(groupId);
   }
 
+  // Takes the account out of a group. The group's owner cannot simply walk away: ownership has to be
+  // handed to another member in Zalo first, so that the group still has someone in charge.
+  public async leaveGroup(groupId: string): Promise<void> {
+    const info = await this.syncGroup(groupId);
+    if (info.creatorId === this.ownId) throw new Error("Bot đang là trưởng nhóm; hãy chuyển quyền trưởng nhóm cho người khác trước khi rời");
+    await this.api.leaveGroup(groupId);
+    this.groupCache.delete(groupId);
+    this.membership = undefined;
+  }
+
   public async isBotAdminIn(groupId: string): Promise<boolean> {
     const info = await this.currentGroup(groupId);
     return info !== undefined && this.isBotAdmin(info);

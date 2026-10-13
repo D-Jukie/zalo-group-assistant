@@ -254,8 +254,9 @@ export class Store {
   }
 
   // Clears one member's record and logged messages, or the whole group's when no member is given.
-  public async clearViolations(groupId: string, userId?: string): Promise<void> {
-    const filter = userId === undefined ? { groupId } : { groupId, userId };
+  // Clears the record of the whole group, or of the given members only.
+  public async clearViolations(groupId: string, userIds?: readonly string[]): Promise<void> {
+    const filter = userIds === undefined ? { groupId } : { groupId, userId: { $in: [...userIds] } };
     await this.violations.deleteMany(filter);
     await this.violationMessages.deleteMany(filter);
   }
@@ -464,6 +465,17 @@ export class Store {
     const filter = { _id: new ObjectId(message.id), dueAt: message.dueAt };
     if (nextDueAt === null) return (await this.reminderMessages.deleteOne(filter)).deletedCount === 1;
     return (await this.reminderMessages.updateOne(filter, { $set: { dueAt: nextDueAt } })).modifiedCount === 1;
+  }
+
+  // Drops every message still waiting for a group, for when the bot is no longer in it.
+  public async removeGroupReminderMessages(groupId: string): Promise<void> {
+    await this.reminderMessages.deleteMany({ groupId });
+  }
+
+  // Cancels several waiting messages at once. Returns how many there were to cancel.
+  public async deleteReminderMessages(ids: readonly string[]): Promise<number> {
+    const objectIds = ids.map(toObjectId).filter((id): id is ObjectId => id !== undefined);
+    return objectIds.length === 0 ? 0 : (await this.reminderMessages.deleteMany({ _id: { $in: objectIds } })).deletedCount;
   }
 
   public async removeReminderMessages(groupId: string, reminderId: string): Promise<void> {

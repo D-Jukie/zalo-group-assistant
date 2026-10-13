@@ -163,6 +163,21 @@ export class ReminderBoard {
     await this.queue.removeReminderMessages(groupId, reminderId);
   }
 
+  // Removes several reminders, one after another. The answer says what happened to each.
+  public async removeMany(items: readonly Readonly<{ groupId: string; reminderId: string }>[]): Promise<Readonly<{ groupId: string; reminderId: string; ok: boolean; error?: string }>[]> {
+    const results: { groupId: string; reminderId: string; ok: boolean; error?: string }[] = [];
+    for (const [index, item] of items.entries()) {
+      if (index > 0 && this.pauseMs > 0) await new Promise((resolve) => setTimeout(resolve, this.pauseMs));
+      try {
+        await this.remove(item.groupId, item.reminderId);
+        results.push({ ...item, ok: true });
+      } catch (error: unknown) {
+        results.push({ ...item, ok: false, error: errorMessage(error) });
+      }
+    }
+    return results;
+  }
+
   // Posts and queues the messages of a reminder that was just created. Returns what went wrong, if anything:
   // the reminder itself exists either way.
   private async sendMessages(reminder: NewReminder, group: AdminGroupView, created: unknown): Promise<string | undefined> {

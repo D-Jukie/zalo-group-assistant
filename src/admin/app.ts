@@ -28,6 +28,16 @@ const violationPageSize = 30;
 const defaultGroupPageSize = 25;
 const maxGroupPageSize = 100;
 const maxSearchLength = 100;
+// How many rows one bulk action may cover.
+const maxBulkItems = 200;
+const groupBulkActions = ["enable", "disable", "leave"] as const;
+
+// A list of distinct, non-empty strings no longer than a bulk action allows; undefined for anything else.
+function parseIdList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value) || !value.every((item): item is string => typeof item === "string" && item !== "")) return undefined;
+  const ids = Array.from(new Set(value));
+  return ids.length === 0 || ids.length > maxBulkItems ? undefined : ids;
+}
 // A reminder's two messages with up to 12 MB of pictures each, written as base64.
 const reminderBodyLimit = "36mb";
 
@@ -89,12 +99,14 @@ function registerListRoutes(app: Express, store: Store, base: string, field: str
     const scope = await guard(request, response);
     if (scope === undefined) return;
     const body: unknown = request.body;
+    // One entry by name, or several at once as "values".
     const value = isRecord(body) ? body[field] : undefined;
-    if (typeof value !== "string") {
+    const values = typeof value === "string" ? [value] : isRecord(body) ? parseIdList(body.values) : undefined;
+    if (values === undefined) {
       response.status(400).json({ error: `${field} phải là chuỗi` });
       return;
     }
-    await list.remove(value, scope.groupId);
+    for (const item of values) await list.remove(item, scope.groupId);
     response.json(list.list(scope.groupId));
   });
 }
@@ -213,6 +225,44 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
       response.status(502).json({ error: `Không lấy được danh sách nhóm từ Zalo: ${errorMessage(error)}` });
     }
   });
+  // One action for several groups: switch the bot on or off, or take the account out of them.
+  // The answer says what happened in each group.
+  app.post("/api/groups/bulk", async (request, response) => {
+    const body: unknown = request.body;
+    const action = isRecord(body) ? groupBulkActions.find((item) => item === body.action) : undefined;
+    const groupIds = isRecord(body) ? parseIdList(body.groupIds) : undefined;
+    if (action === undefined || groupIds === undefined) {
+      response.status(400).json({ error: `Hãy chọn từ 1 đến ${maxBulkItems} nhóm` });
+      return;
+    }
+    try {
+      const names = new Map((await bot.listGroups()).map((group) => [group.groupId, group.name]));
+      const results: { groupId: string; groupName: string; ok: boolean; error?: string }[] = [];
+      for (const groupId of groupIds) {
+        const groupName = names.get(groupId);
+        if (groupName === undefined) {
+          results.push({ groupId, groupName: "", ok: false, error: "Bot không ở trong nhóm này" });
+          continue;
+        }
+        try {
+          if (action === "leave") {
+            await bot.leaveGroup(groupId);
+            // Nothing can be sent to a group the account has left.
+            await store.removeGroupReminderMessages(groupId);
+            reminders.forget(groupId);
+          } else {
+            await store.setGroupSetting(groupId, "botEnabled", action === "enable");
+          }
+          results.push({ groupId, groupName, ok: true });
+        } catch (error: unknown) {
+          results.push({ groupId, groupName, ok: false, error: errorMessage(error) });
+        }
+      }
+      response.json({ results });
+    } catch (error: unknown) {
+      response.status(502).json({ error: `Không lấy được danh sách nhóm từ Zalo: ${errorMessage(error)}` });
+    }
+  });
   app.post("/api/groups/sync", async (_request, response) => {
     try {
       await bot.syncAllGroups();
@@ -277,12 +327,15 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
   });
   app.delete("/api/groups/:groupId/violations", async (request, response) => {
     const body: unknown = request.body;
+    // One member, several members ("userIds"), or with neither the whole group.
     const userId = isRecord(body) ? body.userId : undefined;
-    if (userId !== undefined && typeof userId !== "string") {
+    const several = isRecord(body) && body.userIds !== undefined;
+    const userIds = typeof userId === "string" ? [userId] : several ? parseIdList(body.userIds) : undefined;
+    if ((userId !== undefined && typeof userId !== "string") || (several && userIds === undefined)) {
       response.status(400).json({ error: "userId phải là chuỗi" });
       return;
     }
-    await store.clearViolations(request.params.groupId, userId);
+    await store.clearViolations(request.params.groupId, userIds);
     response.json(await store.listViolations(request.params.groupId));
   });
   app.get("/api/groups/:groupId/reminders/:reminderId/responses", async (request, response) => {
@@ -336,6 +389,28 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
   app.get("/api/reminders", async (request, response) => {
     try {
       response.json(await reminders.list(request.query.refresh === "1"));
+    } catch (error: unknown) {
+      response.status(502).json({ error: `Không lấy được danh sách nhóm từ Zalo: ${errorMessage(error)}` });
+    }
+  });
+  // Removes several reminders at once. The answer says what happened to each.
+  app.post("/api/reminders/delete", async (request, response) => {
+    const body: unknown = request.body;
+    const rawItems: unknown = isRecord(body) ? body.items : undefined;
+    const items = Array.isArray(rawItems) && rawItems.length > 0 && rawItems.length <= maxBulkItems
+      ? rawItems.map((item: unknown) => isRecord(item) && typeof item.groupId === "string" && typeof item.reminderId === "string" && item.reminderId !== "" ? { groupId: item.groupId, reminderId: item.reminderId } : undefined)
+      : [undefined];
+    const valid = items.filter((item) => item !== undefined);
+    if (valid.length !== items.length) {
+      response.status(400).json({ error: `Hãy chọn từ 1 đến ${maxBulkItems} nhắc hẹn` });
+      return;
+    }
+    try {
+      // Only groups the account is still in can be acted on.
+      const groupIds = new Set((await bot.listGroups()).map((group) => group.groupId));
+      const known = valid.filter((item) => groupIds.has(item.groupId));
+      const skipped = valid.filter((item) => !groupIds.has(item.groupId)).map((item) => ({ ...item, ok: false, error: "Bot không ở trong nhóm này" }));
+      response.json({ results: [...await reminders.removeMany(known), ...skipped] });
     } catch (error: unknown) {
       response.status(502).json({ error: `Không lấy được danh sách nhóm từ Zalo: ${errorMessage(error)}` });
     }
@@ -408,6 +483,16 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
     else if (outcome === "invalid") response.status(409).json({ error: "Ảnh của tin nhắn đã thay đổi; hãy mở lại để sửa" });
     else if (outcome === "tooHeavy") response.status(400).json({ error: "Tổng dung lượng ảnh của một tin tối đa 12 MB" });
     else response.json({ ok: true });
+  });
+  // Cancels several waiting messages at once.
+  app.post("/api/reminder-messages/delete", async (request, response) => {
+    const body: unknown = request.body;
+    const ids = isRecord(body) ? parseIdList(body.ids) : undefined;
+    if (ids === undefined) {
+      response.status(400).json({ error: `Hãy chọn từ 1 đến ${maxBulkItems} tin nhắn` });
+      return;
+    }
+    response.json({ deleted: await store.deleteReminderMessages(ids) });
   });
   app.delete("/api/reminder-messages/:messageId", async (request, response) => {
     if (!await store.deleteReminderMessage(request.params.messageId)) {
