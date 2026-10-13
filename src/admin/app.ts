@@ -1,5 +1,7 @@
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import { parseJoinApprovalSettings } from "../approval/join-approval.js";
+import { parseAutoReply } from "../auto-reply/auto-reply.js";
+import type { AutoReplies, AutoReplySaveOutcome } from "../auto-reply/auto-replies.js";
 import type { JoinApprover } from "../approval/join-approver.js";
 import type { SimpleBot } from "../bot/simple-bot.js";
 import type { BannedWords } from "../moderation/banned-words.js";
@@ -116,16 +118,16 @@ function registerListRoutes(app: Express, store: Store, base: string, field: str
 }
 
 // The JSON API behind the dashboard in web/. It serves no pages of its own.
-export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCodeService, blockedLinks: BlockedLinks, bannedWords: BannedWords, reminders: ReminderBoard, approver: JoinApprover): Express {
+export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCodeService, blockedLinks: BlockedLinks, bannedWords: BannedWords, reminders: ReminderBoard, approver: JoinApprover, autoReplies: AutoReplies): Express {
   const app = express();
   app.disable("x-powered-by");
   // Requests are small, except the ones that may carry pictures: a new reminder, a new scheduled
-  // message and a change to a waiting message. Those are read by their own routes, after sign-in.
+  // message, a change to a waiting message, and a new or changed automatic answer. Those are read by their own routes, after sign-in.
   const readJson = express.json({ limit: "32kb" });
   const readPictures = express.json({ limit: reminderBodyLimit });
   app.use((request, response, next) => {
-    const carriesPictures = (request.method === "POST" && (request.path === "/api/reminders" || request.path === "/api/reminder-messages"))
-      || (request.method === "PATCH" && request.path.startsWith("/api/reminder-messages/"));
+    const carriesPictures = (request.method === "POST" && (request.path === "/api/reminders" || request.path === "/api/reminder-messages" || request.path === "/api/auto-replies"))
+      || (request.method === "PATCH" && (request.path.startsWith("/api/reminder-messages/") || request.path.startsWith("/api/auto-replies/")));
     if (carriesPictures) next();
     else readJson(request, response, next);
   });
@@ -643,6 +645,61 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
       return;
     }
     response.json({ ok: true });
+  });
+
+  // The answers the bot gives by itself when a member types a keyword or a command.
+  const autoReplyErrors: Readonly<Record<Exclude<AutoReplySaveOutcome, "saved">, readonly [number, string]>> = {
+    missing: [404, "Câu trả lời này không còn nữa"],
+    empty: [400, "Câu trả lời cần có nội dung hoặc ảnh"],
+    invalid: [409, "Ảnh của câu trả lời đã thay đổi; hãy mở lại để sửa"],
+    tooHeavy: [400, "Tổng dung lượng ảnh của một câu trả lời tối đa 12 MB"],
+  };
+  const answerSave = (response: Response, outcome: AutoReplySaveOutcome): void => {
+    if (outcome === "saved") {
+      response.json(autoReplies.list());
+      return;
+    }
+    const [status, error] = autoReplyErrors[outcome];
+    response.status(status).json({ error });
+  };
+  app.get("/api/auto-replies", (_request, response) => response.json(autoReplies.list()));
+  app.post("/api/auto-replies", readPictures, async (request, response) => {
+    const draft = parseAutoReply(request.body);
+    if (typeof draft === "string") {
+      response.status(400).json({ error: draft });
+      return;
+    }
+    answerSave(response, await autoReplies.create(draft));
+  });
+  // Switches several answers on or off, or removes them, in one request.
+  app.post("/api/auto-replies/bulk", async (request, response) => {
+    const body: unknown = request.body;
+    const ids = isRecord(body) ? parseIdList(body.ids) : undefined;
+    const action = isRecord(body) ? body.action : undefined;
+    if (ids === undefined || (action !== "enable" && action !== "disable" && action !== "delete")) {
+      response.status(400).json({ error: `Hãy chọn từ 1 đến ${maxBulkItems} câu trả lời` });
+      return;
+    }
+    if (action === "delete") await autoReplies.remove(ids);
+    else for (const id of ids) await autoReplies.setEnabled(id, action === "enable");
+    response.json(autoReplies.list());
+  });
+  app.get("/api/auto-replies/:replyId/images/:index", async (request, response) => {
+    const index = Number(request.params.index);
+    const image = Number.isInteger(index) && index >= 0 ? (await autoReplies.images(request.params.replyId))[index] : undefined;
+    if (image === undefined) {
+      response.status(404).json({ error: "Câu trả lời này không có ảnh đó" });
+      return;
+    }
+    response.type(image.extension === "jpg" ? "image/jpeg" : `image/${image.extension}`).send(image.data);
+  });
+  app.patch("/api/auto-replies/:replyId", readPictures, async (request, response) => {
+    const draft = parseAutoReply(request.body);
+    if (typeof draft === "string") {
+      response.status(400).json({ error: draft });
+      return;
+    }
+    answerSave(response, await autoReplies.update(request.params.replyId, draft));
   });
 
   app.use((_request, response) => response.status(404).json({ error: "Not found" }));

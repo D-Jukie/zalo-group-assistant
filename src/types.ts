@@ -214,6 +214,44 @@ export type JoinReview = Readonly<{
 
 export type JoinReviewResult = Readonly<{ userId: string; name: string; ok: boolean; error?: string }>;
 
+// What sets off an automatic answer: words a member types, or a command such as "/huongdan".
+export type AutoReplyKind = "keyword" | "command";
+
+// How a keyword is compared: the whole message, or whole words anywhere in it.
+export type AutoReplyMatch = "exact" | "contains";
+
+// An answer the bot gives by itself, as the dashboard lists it. The pictures are fetched separately.
+export type AutoReplyRule = Readonly<{
+  id: string;
+  kind: AutoReplyKind;
+  match: AutoReplyMatch;
+  // Stored in lower case; a command as "/name".
+  triggers: readonly string[];
+  text: string;
+  imageCount: number;
+  // The groups it answers in; empty for every group the bot is switched on for.
+  groupIds: readonly string[];
+  // The rule answers at most once in a group in this long.
+  cooldownSeconds: number;
+  enabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+  sentCount: number;
+  lastSentAt: number | null;
+}>;
+
+// A rule being created or changed. Each picture is new, or `keep` with the position of one the rule already has.
+export type AutoReplyDraft = Readonly<{
+  kind: AutoReplyKind;
+  match: AutoReplyMatch;
+  triggers: readonly string[];
+  text: string;
+  images: readonly (MessageImage | Readonly<{ keep: number }>)[];
+  groupIds: readonly string[];
+  cooldownSeconds: number;
+  enabled: boolean;
+}>;
+
 export const reminderRepeats = ["none", "daily", "weekly", "monthly"] as const;
 
 export type ReminderRepeat = (typeof reminderRepeats)[number];

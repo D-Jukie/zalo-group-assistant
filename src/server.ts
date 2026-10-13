@@ -2,8 +2,10 @@ import "dotenv/config";
 import { createAdminApp } from "./admin/app.js";
 import { LoginCodeService } from "./admin/login-code.js";
 import { JoinApprover } from "./approval/join-approver.js";
+import { AutoReplies } from "./auto-reply/auto-replies.js";
 import { SimpleBot } from "./bot/simple-bot.js";
 import { parseConfig, type Config } from "./config.js";
+import { AutoReplyFeature } from "./features/auto-reply.js";
 import { BadWordFilterFeature } from "./features/bad-word-filter.js";
 import { LinkGuardFeature } from "./features/link-guard.js";
 import { SpamGuardFeature } from "./features/spam-guard.js";
@@ -36,8 +38,9 @@ async function main(): Promise<void> {
   const store = await Store.open(config.mongodbUri, config.mongodbDatabase);
   const blockedLinks = await BlockedLinks.load(store);
   const bannedWords = await BannedWords.load(store);
+  const autoReplies = await AutoReplies.load(store);
   const api = await login(store, config.credentialsKey);
-  const bot = new SimpleBot(api, store, api.getOwnId(), [new LinkGuardFeature(blockedLinks), new BadWordFilterFeature(bannedWords), new SpamGuardFeature()]);
+  const bot = new SimpleBot(api, store, api.getOwnId(), [new LinkGuardFeature(blockedLinks), new BadWordFilterFeature(bannedWords), new SpamGuardFeature(), new AutoReplyFeature(api, autoReplies)]);
   await bot.start();
   const reminders = new ReminderBoard(api, bot, store);
   const reminderMessenger = new ReminderMessenger(api, store);
@@ -47,7 +50,7 @@ async function main(): Promise<void> {
   // Reminders are created, changed and answered through group events.
   api.listener.on("group_event", (event) => reminders.forget(event.threadId));
   const loginCodes = new LoginCodeService(createLoginCodeSender(bot, config));
-  const app = createAdminApp(bot, store, loginCodes, blockedLinks, bannedWords, reminders, approver);
+  const app = createAdminApp(bot, store, loginCodes, blockedLinks, bannedWords, reminders, approver, autoReplies);
   const server = app.listen(config.port, config.host);
   const shutdown = (): void => {
     bot.stop();

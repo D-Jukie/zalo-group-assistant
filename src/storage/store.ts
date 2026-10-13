@@ -1,6 +1,6 @@
 import { MongoClient, ObjectId, type Binary, type Collection, type Filter, type UpdateFilter } from "mongodb";
 import { GroupEventType, type GroupInfo } from "zca-js";
-import { defaultJoinApproval, defaultKickRules, defaultSpamSettings, violationRules, type JoinApprovalSettings, type JoinReview, type DailyViolations, type GroupSetting, type JsonRecord, type KickRule, type KickRules, type MemberViolations, type MessageImage, type PendingReminderMessage, type RecentViolation, type ReminderMessageEdit, type ViolationLogFilter, type ReminderRepeat, type ScheduledReminderMessage, type SpamSettings, type StoredGroup, type ViolationMatch, type ViolationMessage, type ViolationMessageStatus, type ViolationRule } from "../types.js";
+import { defaultJoinApproval, defaultKickRules, defaultSpamSettings, violationRules, type AutoReplyDraft, type AutoReplyKind, type AutoReplyMatch, type AutoReplyRule, type JoinApprovalSettings, type JoinReview, type DailyViolations, type GroupSetting, type JsonRecord, type KickRule, type KickRules, type MemberViolations, type MessageImage, type PendingReminderMessage, type RecentViolation, type ReminderMessageEdit, type ViolationLogFilter, type ReminderRepeat, type ScheduledReminderMessage, type SpamSettings, type StoredGroup, type ViolationMatch, type ViolationMessage, type ViolationMessageStatus, type ViolationRule } from "../types.js";
 import type { EncryptedSecret } from "./secret-box.js";
 import { asNumber, asString, escapeRegExp, isRecord, now, uniqueStrings } from "../utils.js";
 import { maxMessageImagesBytes, totalImageBytes } from "../reminders/reminder.js";
@@ -106,6 +106,23 @@ function storedImages(document: Pick<ReminderMessageDocument, "image" | "images"
 // Leaves the bytes of the pictures out of what a query returns.
 const withoutImageData = { "image.data": 0, "images.data": 0 } as const;
 
+// An answer the bot gives by itself.
+type AutoReplyDocument = {
+  _id: ObjectId;
+  kind: AutoReplyKind;
+  match: AutoReplyMatch;
+  triggers: string[];
+  text: string;
+  images?: StoredImage[];
+  groupIds: string[];
+  cooldownSeconds: number;
+  enabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+  sentCount: number;
+  lastSentAt: number | null;
+};
+
 type JoinReviewDocument = JoinReview & {
   groupId: string;
   // Drives the TTL index that removes old entries.
@@ -130,6 +147,7 @@ export class Store {
     private readonly violationMessages: Collection<ViolationMessageDocument>,
     private readonly reminderMessages: Collection<ReminderMessageDocument>,
     private readonly joinReviews: Collection<JoinReviewDocument>,
+    private readonly autoReplies: Collection<AutoReplyDocument>,
   ) {}
 
   public static async open(uri: string, databaseName: string): Promise<Store> {
@@ -146,6 +164,7 @@ export class Store {
       database.collection<ViolationMessageDocument>("violation_messages"),
       database.collection<ReminderMessageDocument>("reminder_messages"),
       database.collection<JoinReviewDocument>("join_reviews"),
+      database.collection<AutoReplyDocument>("auto_replies"),
     );
     // MongoDB removes expired sessions on its own.
     await store.sessions.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
@@ -431,6 +450,79 @@ export class Store {
   // Until the master switch existed, botEnabled meant "block links" and each rule worked on its own.
   // Groups saved that way keep their behaviour: the link rule takes over the old value, and the
   // master switch is on wherever any rule was on. Groups already converted are left alone.
+  // Every automatic answer, oldest first, without the pictures themselves.
+  public async listAutoReplies(): Promise<AutoReplyRule[]> {
+    const documents = await this.autoReplies.find({}, { projection: { "images.data": 0 }, sort: { createdAt: 1 } }).toArray();
+    return documents.map((document) => ({
+      id: document._id.toHexString(),
+      kind: document.kind,
+      match: document.match,
+      triggers: document.triggers,
+      text: document.text,
+      imageCount: document.images?.length ?? 0,
+      groupIds: document.groupIds,
+      cooldownSeconds: document.cooldownSeconds,
+      enabled: document.enabled,
+      createdAt: document.createdAt,
+      updatedAt: document.updatedAt,
+      sentCount: document.sentCount,
+      lastSentAt: document.lastSentAt,
+    }));
+  }
+
+  // "empty" when there is neither text nor a picture to answer with, "invalid" when the draft keeps a
+  // picture the rule does not have, "tooHeavy" when the pictures together are too large.
+  public async createAutoReply(draft: AutoReplyDraft): Promise<"saved" | "empty" | "invalid" | "tooHeavy"> {
+    const fields = this.autoReplyFields(draft, []);
+    if (typeof fields === "string") return fields;
+    const at = now();
+    await this.autoReplies.insertOne({ _id: new ObjectId(), ...fields, createdAt: at, updatedAt: at, sentCount: 0, lastSentAt: null });
+    return "saved";
+  }
+
+  public async updateAutoReply(id: string, draft: AutoReplyDraft): Promise<"saved" | "missing" | "empty" | "invalid" | "tooHeavy"> {
+    const _id = toObjectId(id);
+    const current = _id === undefined ? null : await this.autoReplies.findOne({ _id });
+    if (_id === undefined || current === null) return "missing";
+    const fields = this.autoReplyFields(draft, current.images ?? []);
+    if (typeof fields === "string") return fields;
+    return (await this.autoReplies.updateOne({ _id }, { $set: { ...fields, updatedAt: now() } })).matchedCount === 1 ? "saved" : "missing";
+  }
+
+  public async setAutoReplyEnabled(id: string, enabled: boolean): Promise<boolean> {
+    const _id = toObjectId(id);
+    return _id !== undefined && (await this.autoReplies.updateOne({ _id }, { $set: { enabled, updatedAt: now() } })).matchedCount === 1;
+  }
+
+  public async deleteAutoReplies(ids: readonly string[]): Promise<number> {
+    const objectIds = ids.map(toObjectId).filter((id): id is ObjectId => id !== undefined);
+    return objectIds.length === 0 ? 0 : (await this.autoReplies.deleteMany({ _id: { $in: objectIds } })).deletedCount;
+  }
+
+  public async getAutoReplyImages(id: string): Promise<MessageImage[]> {
+    const _id = toObjectId(id);
+    const document = _id === undefined ? null : await this.autoReplies.findOne({ _id }, { projection: { images: 1 } });
+    return (document?.images ?? []).map(toImage);
+  }
+
+  public async recordAutoReplySent(id: string, at: number): Promise<void> {
+    const _id = toObjectId(id);
+    if (_id !== undefined) await this.autoReplies.updateOne({ _id }, { $inc: { sentCount: 1 }, $set: { lastSentAt: at } });
+  }
+
+  // What a draft stores, with its kept pictures taken from the ones the rule has now.
+  private autoReplyFields(draft: AutoReplyDraft, stored: readonly StoredImage[]): Pick<AutoReplyDocument, "kind" | "match" | "triggers" | "text" | "images" | "groupIds" | "cooldownSeconds" | "enabled"> | "empty" | "invalid" | "tooHeavy" {
+    const images: StoredImage[] = [];
+    for (const item of draft.images) {
+      const image = "keep" in item ? stored[item.keep] : item;
+      if (image === undefined) return "invalid";
+      images.push(image);
+    }
+    if (draft.text === "" && images.length === 0) return "empty";
+    if (totalImageBytes(images.map((image) => ({ data: { length: Buffer.isBuffer(image.data) ? image.data.length : image.data.length() } }))) > maxMessageImagesBytes) return "tooHeavy";
+    return { kind: draft.kind, match: draft.match, triggers: [...draft.triggers], text: draft.text, images, groupIds: [...draft.groupIds], cooldownSeconds: draft.cooldownSeconds, enabled: draft.enabled };
+  }
+
   public async addReminderMessage(message: Omit<ScheduledReminderMessage, "id">): Promise<void> {
     await this.reminderMessages.insertOne({
       _id: new ObjectId(),
