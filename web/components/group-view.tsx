@@ -13,6 +13,7 @@ import { ConfirmDialog } from "./confirm-dialog";
 import { JoinApprovalCard, PendingMembers } from "./group-approvals";
 import { GroupZaloSettings } from "./group-zalo-settings";
 import { GroupCommands } from "./group-commands";
+import { GroupWelcome } from "./group-welcome";
 import { GroupMembers } from "./group-members";
 import { ListManager } from "./list-manager";
 import { RowCheckbox, RowNumber, SelectAllCheckbox, SelectionBar, useSelection } from "./selection";
@@ -295,6 +296,8 @@ function FeatureCards({ group, onChange }: { group: Group; onChange: (group: Gro
       </FeatureCard>
       {/* Saved criteria remount the card so its fields show the stored values again. */}
       <JoinApprovalCard key={JSON.stringify(group.joinApproval)} group={group} onChange={onChange} />
+      {/* A saved welcome remounts the card so its field shows the stored words again. */}
+      <GroupWelcome key={group.welcome.text} group={group} onChange={onChange} />
     </div>
   );
 }

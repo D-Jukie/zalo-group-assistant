@@ -40,6 +40,9 @@ export type GroupCommandSettings = { random: { enabled: boolean; adminOnly: bool
 // One group's row on the page that sets the bot's own commands. Only groups with the bot on are listed.
 export type GroupCommandRow = { groupId: string; name: string; memberCount: number; commands: GroupCommandSettings };
 
+// What the bot says to people who join the group; the text may hold {name}, {nameCom} and {count}.
+export type GroupWelcomeSettings = { enabled: boolean; text: string };
+
 export type Group = {
   groupId: string;
   name: string;
@@ -54,6 +57,7 @@ export type Group = {
   spamSettings: SpamSettings;
   joinApproval: JoinApprovalSettings;
   commands: GroupCommandSettings;
+  welcome: GroupWelcomeSettings;
   kickRules: Record<ViolationRule, KickRule>;
   botIsAdmin: boolean;
   updatedAt: number;
