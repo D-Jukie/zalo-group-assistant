@@ -318,6 +318,24 @@ Lệnh chỉ trả lời ở nhóm đang bật bot, nên bảng ở trang `Trả
 - Gõ sai cú pháp thì bot trả lời cách dùng. Lệnh nghỉ 3 giây giữa hai lần trả lời trong một nhóm; ở chế độ chỉ cho quản trị viên, thành viên thường gõ lệnh sẽ không được trả lời.
 - Khi lệnh đang bật ở một nhóm, nó được ưu tiên hơn câu trả lời soạn sẵn có cùng lệnh `/random`; khi tắt, câu soạn sẵn (nếu có) vẫn trả lời như thường.
 
+## Chào thành viên mới
+
+Khi có người vào nhóm, bot gửi một lời chào do bạn soạn và tag người đó. Mỗi nhóm bật và soạn riêng ở thẻ `Chào thành viên mới` trong tab `Tính năng` của trang nhóm; mặc định tắt.
+
+| Viết trong lời chào | Bot thay bằng |
+|---|---|
+| `{name}` | tên người mới vào, có tag |
+| `{nameCom}` | tên nhóm |
+| `{count}` | số thành viên của nhóm |
+
+Ví dụ: `Chào mừng {name} đến với cộng đồng {nameCom}!`
+
+- Bot chờ 4 giây sau khi có người vào rồi mới chào, để những người vào cùng lúc (ví dụ khi duyệt cả danh sách chờ) được chào chung trong một tin: `Chào mừng @An, @Bình đến với…`. Một tin nêu tối đa 20 người, phần còn lại ghi là `và N thành viên khác`.
+- Lời chào dùng được các thẻ định dạng của trình soạn tin (`[b]…[/b]`, màu, cỡ chữ) và dài tối đa 2.000 ký tự; thẻ có phần xem trước ngay bên cạnh ô soạn. Chưa kèm được ảnh.
+- Bot không chào chính nó, không chào ở nhóm đang tắt bot, và không gửi lời tạm biệt khi có người rời nhóm.
+- Gửi tin không cần quyền trưởng hay phó nhóm. Nếu Zalo từ chối (ví dụ nhóm chỉ cho trưởng, phó nhóm nhắn tin mà bot là thành viên thường), lần chào đó được ghi là thất bại trong `Lịch sử hoạt động`.
+- Mỗi lần chào và mỗi lần đổi cài đặt đều có trong `Lịch sử hoạt động`, loại `Tin nhắn và nhắc hẹn`.
+
 ## Duyệt thành viên
 
 Với nhóm bật phê duyệt thành viên trên Zalo, bot có thể tự duyệt người xin vào. Mỗi nhóm bật riêng ở thẻ `Duyệt thành viên tự động` của tab `Tính năng` (mặc định tắt; cần bot là trưởng hoặc phó nhóm) và tự chọn tiêu chí:
