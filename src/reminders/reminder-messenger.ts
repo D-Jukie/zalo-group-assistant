@@ -1,4 +1,5 @@
 import { ThreadType, type API } from "zca-js";
+import { noActivity, previewText, type ActivityRecorder } from "../activity/activity-log.js";
 import { writeLog } from "../logger.js";
 import type { ReminderMessage, ScheduledReminderMessage, StoredGroup } from "../types.js";
 import { now } from "../utils.js";
@@ -42,6 +43,7 @@ export class ReminderMessenger {
   public constructor(
     private readonly api: MessageApi,
     private readonly store: MessageStore,
+    private readonly activity: ActivityRecorder = noActivity,
   ) {}
 
   public start(): void {
@@ -75,20 +77,32 @@ export class ReminderMessenger {
 
   private async deliver(message: ScheduledReminderMessage, at: number): Promise<void> {
     const fields = { group: message.groupId, reminder: message.reminderId };
+    const entry = {
+      category: "messages",
+      actor: "bot",
+      title: message.reminderId === "" ? "Gửi tin nhắn hẹn giờ" : "Gửi tin nhắn khi đến giờ nhắc hẹn",
+      detail: [message.title === "" ? "" : `Nhắc hẹn “${message.title}”`, previewText(message.text, message.images?.length ?? 0)].filter((part) => part !== "").join(": "),
+      groupId: message.groupId,
+    } as const;
     if (at - message.dueAt > maxLateMs) {
       writeLog("[REMINDER MESSAGE SKIPPED]", "yellow", { ...fields, reason: "bot was not running at the time" }, "warn");
+      this.activity.record({ ...entry, ok: false, error: "Bỏ qua vì bot không chạy vào giờ hẹn" });
       return;
     }
     // A group the bot has since been switched off for is left alone.
     if ((await this.store.getGroup(message.groupId))?.botEnabled !== true) {
       writeLog("[REMINDER MESSAGE SKIPPED]", "yellow", { ...fields, reason: "bot is off for the group" }, "warn");
+      this.activity.record({ ...entry, ok: false, error: "Bỏ qua vì bot đang tắt ở nhóm này" });
       return;
     }
     try {
       await sendGroupMessage(this.api, message.groupId, message);
       writeLog("[REMINDER MESSAGE SENT]", "green", fields);
+      this.activity.record(entry);
     } catch (error: unknown) {
-      writeLog("[REMINDER MESSAGE FAILED]", "red", { ...fields, error: error instanceof Error ? error.message : String(error) }, "error");
+      const reason = error instanceof Error ? error.message : String(error);
+      writeLog("[REMINDER MESSAGE FAILED]", "red", { ...fields, error: reason }, "error");
+      this.activity.record({ ...entry, ok: false, error: reason });
     }
   }
 }

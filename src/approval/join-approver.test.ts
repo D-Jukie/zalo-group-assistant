@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { defaultGroupCommands, defaultKickRules, defaultSpamSettings, type JoinApprovalSettings, type JoinReview, type LiveGroupInfo, type StoredGroup } from "../types.js";
+import { defaultGroupCommands, defaultKickRules, defaultSpamSettings, type JoinApprovalSettings, type JoinReview, type LiveGroupInfo, type NewActivity, type StoredGroup } from "../types.js";
 import { JoinApprover } from "./join-approver.js";
 
 const day = 24 * 60 * 60 * 1000;
@@ -13,6 +13,7 @@ type Waiting = Readonly<{ uid: string; dpn: string; avatar: string; ageDays: num
 function setup(options: Readonly<{ waiting: readonly Waiting[]; settings?: Partial<JoinApprovalSettings>; totalMember?: number; botEnabled?: boolean; adminIds?: readonly string[]; refuse?: Readonly<Record<string, number>> }>) {
   const decided: { members: string[]; approve: boolean }[] = [];
   const logged: Omit<JoinReview, "at">[] = [];
+  const history: NewActivity[] = [];
   let waiting = [...options.waiting];
   const info = { groupId: "g1", creatorId: "owner", adminIds: options.adminIds ?? ["bot"], totalMember: options.totalMember ?? 10, maxMember: 1000, setting: { joinAppr: 1 } } as unknown as LiveGroupInfo;
   const group = {
@@ -32,7 +33,7 @@ function setup(options: Readonly<{ waiting: readonly Waiting[]; settings?: Parti
   } as unknown as ConstructorParameters<typeof JoinApprover>[0];
   const groups = { ownId: "bot", syncGroup: () => Promise.resolve(info), isInGroup: () => Promise.resolve(true) };
   const store = { getGroup: () => Promise.resolve(group), listGroups: () => Promise.resolve([group]), logJoinReview: (_groupId: string, review: Omit<JoinReview, "at">) => { logged.push(review); return Promise.resolve(); } };
-  return { approver: new JoinApprover(api, groups, store), decided, logged };
+  return { approver: new JoinApprover(api, groups, store, { record: (entry) => history.push(entry) }), decided, logged, history };
 }
 
 const waiting: Waiting[] = [
@@ -78,4 +79,16 @@ await test("an admin's decision is carried out, logged, and stops where the grou
   assert.deepEqual(rejected.map((result) => [result.userId, result.ok, result.error ?? null]), [["faceless", true, null], ["gone", false, "Không còn trong danh sách chờ"]]);
   assert.deepEqual(decided, [{ members: ["new"], approve: true }, { members: ["faceless", "gone"], approve: false }]);
   assert.deepEqual(logged.map((review) => [review.userId, review.userName, review.decision, review.by]), [["new", "Tài khoản mới", "approved", "manual"], ["faceless", "Không ảnh", "rejected", "manual"]]);
+});
+
+await test("each decision goes into the history: the bot's own, an admin's, and one Zalo refused", async () => {
+  const { approver, history } = setup({ waiting, refuse: { gone: 170 } });
+  await approver.process("g1");
+  await approver.review("g1", ["faceless", "gone"], false);
+  assert.deepEqual(history.map((entry) => [entry.actor, entry.title, entry.userName, entry.ok ?? true, entry.error ?? ""]), [
+    ["bot", "Duyệt vào nhóm", "Tài khoản lâu năm", true, ""],
+    ["bot", "Duyệt vào nhóm", "Đủ điều kiện", true, ""],
+    ["admin", "Từ chối vào nhóm", "Không ảnh", true, ""],
+    ["admin", "Từ chối vào nhóm", "", false, "Không còn trong danh sách chờ"],
+  ]);
 });

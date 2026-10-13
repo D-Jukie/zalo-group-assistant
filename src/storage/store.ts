@@ -1,6 +1,6 @@
 import { MongoClient, ObjectId, type Binary, type Collection, type Filter, type UpdateFilter } from "mongodb";
 import { GroupEventType, type GroupInfo } from "zca-js";
-import { defaultGroupCommands, defaultJoinApproval, defaultKickRules, defaultSpamSettings, violationRules, type AutoReplyDraft, type AutoReplyKind, type GroupCommandSettings, type AutoReplyMatch, type AutoReplyRule, type JoinApprovalSettings, type JoinReview, type DailyViolations, type GroupSetting, type JsonRecord, type KickRule, type KickRules, type MemberViolations, type MessageImage, type PendingReminderMessage, type RecentViolation, type ReminderMessageEdit, type ViolationLogFilter, type ReminderRepeat, type ScheduledReminderMessage, type SpamSettings, type StoredGroup, type ViolationMatch, type ViolationMessage, type ViolationMessageStatus, type ViolationRule } from "../types.js";
+import { defaultGroupCommands, type ActivityEntry, type ActivityFilter, type NewActivity, defaultJoinApproval, defaultKickRules, defaultSpamSettings, violationRules, type AutoReplyDraft, type AutoReplyKind, type GroupCommandSettings, type AutoReplyMatch, type AutoReplyRule, type JoinApprovalSettings, type JoinReview, type DailyViolations, type GroupSetting, type JsonRecord, type KickRule, type KickRules, type MemberViolations, type MessageImage, type PendingReminderMessage, type RecentViolation, type ReminderMessageEdit, type ViolationLogFilter, type ReminderRepeat, type ScheduledReminderMessage, type SpamSettings, type StoredGroup, type ViolationMatch, type ViolationMessage, type ViolationMessageStatus, type ViolationRule } from "../types.js";
 import type { EncryptedSecret } from "./secret-box.js";
 import { asNumber, asString, escapeRegExp, isRecord, now, uniqueStrings } from "../utils.js";
 import { maxMessageImagesBytes, totalImageBytes } from "../reminders/reminder.js";
@@ -132,6 +132,16 @@ type JoinReviewDocument = JoinReview & {
 
 const joinReviewRetentionDays = 90;
 
+// How long the history of what the bot and its admins did is kept.
+const activityRetentionDays = 90;
+
+type ActivityDocument = Required<NewActivity> & {
+  _id: ObjectId;
+  at: number;
+  // Drives the TTL index.
+  createdAt: Date;
+};
+
 type SettingDocument = {
   _id: string;
   values: string[];
@@ -149,6 +159,7 @@ export class Store {
     private readonly reminderMessages: Collection<ReminderMessageDocument>,
     private readonly joinReviews: Collection<JoinReviewDocument>,
     private readonly autoReplies: Collection<AutoReplyDocument>,
+    private readonly activity: Collection<ActivityDocument>,
   ) {}
 
   public static async open(uri: string, databaseName: string): Promise<Store> {
@@ -166,6 +177,7 @@ export class Store {
       database.collection<ReminderMessageDocument>("reminder_messages"),
       database.collection<JoinReviewDocument>("join_reviews"),
       database.collection<AutoReplyDocument>("auto_replies"),
+      database.collection<ActivityDocument>("activity_log"),
     );
     // MongoDB removes expired sessions on its own.
     await store.sessions.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
@@ -177,6 +189,9 @@ export class Store {
     await store.violationMessages.createIndex({ createdAt: 1 }, { expireAfterSeconds: violationMessageRetentionDays * 24 * 60 * 60 });
     await store.joinReviews.createIndex({ groupId: 1, at: -1 });
     await store.joinReviews.createIndex({ createdAt: 1 }, { expireAfterSeconds: joinReviewRetentionDays * 24 * 60 * 60 });
+    await store.activity.createIndex({ at: -1, _id: -1 });
+    await store.activity.createIndex({ groupId: 1, at: -1 });
+    await store.activity.createIndex({ createdAt: 1 }, { expireAfterSeconds: activityRetentionDays * 24 * 60 * 60 });
     await store.reminderMessages.createIndex({ dueAt: 1 });
     await store.reminderMessages.createIndex({ groupId: 1, reminderId: 1 });
     return store;
@@ -255,6 +270,57 @@ export class Store {
 
   public async setJoinApproval(groupId: string, settings: JoinApprovalSettings): Promise<StoredGroup | undefined> {
     return this.updateGroup(groupId, { joinApproval: { enabled: settings.enabled, requireAvatar: settings.requireAvatar, minAccountAgeDays: settings.minAccountAgeDays } });
+  }
+
+  // Writes one entry into the history of what the bot and its admins did.
+  public async addActivity(entry: Required<NewActivity>): Promise<void> {
+    const at = now();
+    await this.activity.insertOne({ _id: new ObjectId(), ...entry, at, createdAt: new Date(at) });
+  }
+
+  // The entries of the history that pass the filter, newest first. `before` continues after the last
+  // entry of an earlier page; entries written in the same millisecond are told apart by their ID.
+  public async listActivity(limit: number, filter: ActivityFilter = {}, before?: Readonly<{ at: number; id: string }>): Promise<ActivityEntry[]> {
+    const conditions = this.activityConditions(filter);
+    const beforeId = before === undefined ? undefined : toObjectId(before.id);
+    if (before !== undefined) conditions.push(beforeId === undefined ? { at: { $lt: before.at } } : { $or: [{ at: { $lt: before.at } }, { at: before.at, _id: { $lt: beforeId } }] });
+    const documents = await this.activity.find(conditions.length === 0 ? {} : { $and: conditions }).sort({ at: -1, _id: -1 }).limit(limit).toArray();
+    return documents.map((document) => ({
+      id: document._id.toHexString(),
+      at: document.at,
+      category: document.category,
+      actor: document.actor,
+      title: document.title,
+      detail: document.detail,
+      ok: document.ok,
+      error: document.error,
+      groupId: document.groupId,
+      groupName: document.groupName,
+      userId: document.userId,
+      userName: document.userName,
+    }));
+  }
+
+  // How many entries of the history pass the filter.
+  public async countActivity(filter: ActivityFilter = {}): Promise<number> {
+    const conditions = this.activityConditions(filter);
+    return this.activity.countDocuments(conditions.length === 0 ? {} : { $and: conditions });
+  }
+
+  private activityConditions(filter: ActivityFilter): Filter<ActivityDocument>[] {
+    const conditions: Filter<ActivityDocument>[] = [];
+    if (filter.category !== undefined) conditions.push({ category: filter.category });
+    if (filter.actor !== undefined) conditions.push({ actor: filter.actor });
+    if (filter.ok !== undefined) conditions.push({ ok: filter.ok });
+    if (filter.groupId !== undefined) conditions.push({ groupId: filter.groupId });
+    if (filter.from !== undefined) conditions.push({ at: { $gte: filter.from } });
+    if (filter.to !== undefined) conditions.push({ at: { $lte: filter.to } });
+    const text = filter.text?.trim() ?? "";
+    if (text !== "") {
+      const $regex = searchPattern(text);
+      conditions.push({ $or: [{ title: { $regex } }, { detail: { $regex } }, { error: { $regex } }, { groupName: { $regex } }, { userName: { $regex } }, { userId: { $regex } }, { groupId: { $regex } }] });
+    }
+    return conditions;
   }
 
   public async logJoinReview(groupId: string, review: Omit<JoinReview, "at">): Promise<void> {

@@ -1,4 +1,5 @@
 import { ThreadType, type API } from "zca-js";
+import { noActivity, previewText, type ActivityRecorder } from "../activity/activity-log.js";
 import type { AutoReplies } from "../auto-reply/auto-replies.js";
 import { memberAnswer, numberAnswer, parseRandomCommand, pickDistinct, pickNumber } from "../auto-reply/random-command.js";
 import type { BotFeature, GroupMessageContext } from "../bot/feature.js";
@@ -32,6 +33,7 @@ export class AutoReplyFeature implements BotFeature {
     private readonly api: ReplyApi,
     private readonly replies: AutoReplies,
     private readonly members: MemberSource,
+    private readonly activity: ActivityRecorder = noActivity,
   ) {}
 
   public async onGroupMessage(context: GroupMessageContext): Promise<void> {
@@ -48,6 +50,7 @@ export class AutoReplyFeature implements BotFeature {
     // Marked before sending, so two messages arriving together get one answer.
     this.lastAnswered.set(key, at);
     const fields = { group: context.groupId, user: context.userId, trigger: rule.triggers[0] ?? "" };
+    const entry = { category: "replies", actor: "bot", title: rule.kind === "command" ? "Trả lời lệnh" : "Trả lời từ khóa", detail: `${rule.triggers[0] ?? ""} → ${previewText(rule.text, rule.imageCount)}`, groupId: context.groupId, userId: context.userId, userName: context.message.data.dName } as const;
     try {
       if (rule.imageCount > 0) {
         await sendGroupMessage(this.api, context.groupId, { text: rule.text, images: await this.replies.images(rule.id) });
@@ -56,10 +59,13 @@ export class AutoReplyFeature implements BotFeature {
       }
       await this.replies.recordSent(rule.id, at);
       writeLog("[AUTO REPLY]", "cyan", fields);
+      this.activity.record(entry);
     } catch (error: unknown) {
       // Nothing went out, so the rule may answer the next time without waiting.
       this.lastAnswered.delete(key);
-      writeLog("[AUTO REPLY FAILED]", "red", { ...fields, error: error instanceof Error ? error.message : String(error) }, "error");
+      const reason = error instanceof Error ? error.message : String(error);
+      writeLog("[AUTO REPLY FAILED]", "red", { ...fields, error: reason }, "error");
+      this.activity.record({ ...entry, ok: false, error: reason });
     }
   }
 
@@ -76,6 +82,7 @@ export class AutoReplyFeature implements BotFeature {
     if (at - (this.lastAnswered.get(key) ?? 0) < commandRestMs) return true;
     this.lastAnswered.set(key, at);
     const fields = { group: context.groupId, user: context.userId, trigger: "/random" };
+    const entry = { category: "replies", actor: "bot", title: "Trả lời lệnh /random", detail: previewText(content), groupId: context.groupId, userId: context.userId, userName: context.message.data.dName } as const;
     try {
       if (request.kind === "invalid") {
         await this.sendText(request.reason, context);
@@ -93,9 +100,12 @@ export class AutoReplyFeature implements BotFeature {
         }
       }
       writeLog("[AUTO REPLY]", "cyan", fields);
+      this.activity.record(entry);
     } catch (error: unknown) {
       this.lastAnswered.delete(key);
-      writeLog("[AUTO REPLY FAILED]", "red", { ...fields, error: error instanceof Error ? error.message : String(error) }, "error");
+      const reason = error instanceof Error ? error.message : String(error);
+      writeLog("[AUTO REPLY FAILED]", "red", { ...fields, error: reason }, "error");
+      this.activity.record({ ...entry, ok: false, error: reason });
     }
     return true;
   }

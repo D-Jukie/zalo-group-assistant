@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { ActivityLog } from "./activity/activity-log.js";
 import { createAdminApp } from "./admin/app.js";
 import { LoginCodeService } from "./admin/login-code.js";
 import { JoinApprover } from "./approval/join-approver.js";
@@ -36,6 +37,7 @@ function createLoginCodeSender(bot: SimpleBot, config: Config): (code: string) =
 async function main(): Promise<void> {
   const config = parseConfig();
   const store = await Store.open(config.mongodbUri, config.mongodbDatabase);
+  const activity = new ActivityLog(store);
   const blockedLinks = await BlockedLinks.load(store);
   const bannedWords = await BannedWords.load(store);
   const autoReplies = await AutoReplies.load(store);
@@ -43,17 +45,18 @@ async function main(): Promise<void> {
   const ownId = api.getOwnId();
   // "/random" picks from the group's members, which the bot reads; the bot itself is made just below.
   const members = { ownId, listMembers: (groupId: string) => bot.listMembers(groupId) };
-  const bot: SimpleBot = new SimpleBot(api, store, ownId, [new LinkGuardFeature(blockedLinks), new BadWordFilterFeature(bannedWords), new SpamGuardFeature(), new AutoReplyFeature(api, autoReplies, members)]);
+  const bot: SimpleBot = new SimpleBot(api, store, ownId, [new LinkGuardFeature(blockedLinks), new BadWordFilterFeature(bannedWords), new SpamGuardFeature(), new AutoReplyFeature(api, autoReplies, members, activity)], activity);
   await bot.start();
+  activity.record({ category: "system", actor: "bot", title: "Bot khởi động" });
   const reminders = new ReminderBoard(api, bot, store);
-  const reminderMessenger = new ReminderMessenger(api, store);
+  const reminderMessenger = new ReminderMessenger(api, store, activity);
   reminderMessenger.start();
-  const approver = new JoinApprover(api, bot, store);
+  const approver = new JoinApprover(api, bot, store, activity);
   approver.start();
   // Reminders are created, changed and answered through group events.
   api.listener.on("group_event", (event) => reminders.forget(event.threadId));
   const loginCodes = new LoginCodeService(createLoginCodeSender(bot, config));
-  const app = createAdminApp(bot, store, loginCodes, blockedLinks, bannedWords, reminders, approver, autoReplies);
+  const app = createAdminApp(bot, store, loginCodes, blockedLinks, bannedWords, reminders, approver, autoReplies, activity);
   const server = app.listen(config.port, config.host);
   const shutdown = (): void => {
     bot.stop();

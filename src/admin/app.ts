@@ -1,4 +1,5 @@
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
+import { formatLogTime, noActivity, parseActivityCursor, parseActivityFilter, previewText, type ActivityRecorder } from "../activity/activity-log.js";
 import { parseJoinApprovalSettings } from "../approval/join-approval.js";
 import { parseAutoReply } from "../auto-reply/auto-reply.js";
 import type { AutoReplies, AutoReplySaveOutcome } from "../auto-reply/auto-replies.js";
@@ -9,7 +10,7 @@ import type { BlockedLinks } from "../moderation/blocked-links.js";
 import { parseMessageRequest, parseReminderMessageEdit, parseReminderRequest } from "../reminders/reminder.js";
 import type { ReminderBoard } from "../reminders/reminder-board.js";
 import type { Store } from "../storage/store.js";
-import { violationMessageStatuses, violationRules, type GroupMember, type GroupSetting, type RateRule, type ViolationLogFilter, type ViolationRule } from "../types.js";
+import { violationMessageStatuses, violationRuleNames, violationRules, type ActivityCategory, type NewActivity, type GroupMember, type GroupSetting, type RateRule, type ViolationLogFilter, type ViolationRule } from "../types.js";
 import { maxSpamWindowSeconds } from "../moderation/spam-detector.js";
 import { isRecord, now } from "../utils.js";
 import { groupFilters, searchGroups, summarizeGroups, type GroupFilter } from "./group-search.js";
@@ -30,6 +31,9 @@ const maxSpamCount = 50;
 const overviewDays = 14;
 const recentViolationLimit = 20;
 const violationPageSize = 30;
+const activityPageSize = 50;
+// What each per-group switch is called in the history.
+const groupSettingNames: Readonly<Record<GroupSetting, string>> = { botEnabled: "bot", linkGuardEnabled: "chặn link", badWordFilterEnabled: "lọc từ cấm", spamGuardEnabled: "chống spam" };
 const defaultGroupPageSize = 25;
 const maxGroupPageSize = 100;
 const maxSearchLength = 100;
@@ -71,7 +75,8 @@ function errorMessage(error: unknown): string {
 
 // Routes for one admin-managed list: read it, add to it, remove from it. With :groupId in the base
 // path they serve that group's own list; without it, the list shared by every group.
-function registerListRoutes(app: Express, store: Store, base: string, field: string, list: ManagedList, invalidMessage: string): void {
+// `noun` is what an entry of the list is called in the history; `log` writes a change into it.
+function registerListRoutes(app: Express, store: Store, base: string, field: string, list: ManagedList, invalidMessage: string, noun: string, log: (title: string, detail: string, groupId: string | undefined) => void): void {
   const scoped = base.includes(":groupId");
   const guard = async (request: Request, response: Response): Promise<{ groupId: string | undefined } | undefined> => {
     const parameter: unknown = scoped ? request.params.groupId : undefined;
@@ -96,6 +101,7 @@ function registerListRoutes(app: Express, store: Store, base: string, field: str
         response.status(400).json({ error: invalidMessage });
         return;
       }
+      log(`Thêm ${noun}`, value, scope.groupId);
       response.json(list.list(scope.groupId));
     } catch (error: unknown) {
       response.status(400).json({ error: errorMessage(error) });
@@ -113,13 +119,36 @@ function registerListRoutes(app: Express, store: Store, base: string, field: str
       return;
     }
     for (const item of values) await list.remove(item, scope.groupId);
+    log(`Xóa ${noun}`, values.join(", "), scope.groupId);
     response.json(list.list(scope.groupId));
   });
 }
 
 // The JSON API behind the dashboard in web/. It serves no pages of its own.
-export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCodeService, blockedLinks: BlockedLinks, bannedWords: BannedWords, reminders: ReminderBoard, approver: JoinApprover, autoReplies: AutoReplies): Express {
+export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCodeService, blockedLinks: BlockedLinks, bannedWords: BannedWords, reminders: ReminderBoard, approver: JoinApprover, autoReplies: AutoReplies, activity: ActivityRecorder = noActivity): Express {
   const app = express();
+  // What an admin does from the dashboard goes into the history, next to what the bot does by itself.
+  const logAdmin = (category: ActivityCategory, title: string, more: Omit<NewActivity, "category" | "actor" | "title"> = {}): void => activity.record({ category, actor: "admin", title, ...more });
+  // How one row of a bulk action ended, as the history takes it.
+  const outcome = (result: Readonly<{ ok: boolean; error?: string }>): Readonly<{ ok?: boolean; error?: string }> => result.ok ? {} : { ok: false, error: result.error ?? "" };
+  const logList = (title: string, detail: string, groupId: string | undefined): void => logAdmin("settings", title, groupId === undefined ? { detail: `${detail} (danh sách chung)` } : { detail, groupId });
+  const randomDetail = (random: Readonly<{ enabled: boolean; adminOnly: boolean }>): string => random.enabled ? `Bật, ${random.adminOnly ? "chỉ trưởng và phó nhóm" : "mọi thành viên"} dùng được` : "Tắt";
+  // Names for the history. They are a nicety: when they cannot be read, the entry simply has none.
+  const memberNames = async (groupId: string): Promise<ReadonlyMap<string, string>> => {
+    try {
+      return new Map((await bot.listMembers(groupId)).members.map((member) => [member.userId, member.name]));
+    } catch {
+      return new Map();
+    }
+  };
+  const violatorNames = async (groupId: string): Promise<ReadonlyMap<string, string>> => new Map((await store.listViolations(groupId)).map((record) => [record.userId, record.userName]));
+  const reminderTitles = async (): Promise<ReadonlyMap<string, string>> => {
+    try {
+      return new Map((await reminders.list()).items.map((reminder) => [`${reminder.groupId}:${reminder.reminderId}`, reminder.title]));
+    } catch {
+      return new Map();
+    }
+  };
   app.disable("x-powered-by");
   // Requests are small, except the ones that may carry pictures: a new reminder, a new scheduled
   // message, a change to a waiting message, and a new or changed automatic answer. Those are read by their own routes, after sign-in.
@@ -148,9 +177,11 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
         response.status(429).json({ error: `Vừa gửi mã, hãy thử lại sau ${result.retryAfterSeconds} giây` });
         return;
       }
+      logAdmin("system", "Gửi mã đăng nhập trang quản trị");
       response.json({ ok: true });
     } catch (error: unknown) {
       console.error("[LOGIN CODE FAILED]", errorMessage(error));
+      logAdmin("system", "Gửi mã đăng nhập trang quản trị", { ok: false, error: errorMessage(error) });
       response.status(502).json({ error: "Không gửi được mã đăng nhập qua Zalo" });
     }
   });
@@ -163,10 +194,14 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
       return;
     }
     await startSession(store, response, remember);
+    logAdmin("system", "Đăng nhập trang quản trị");
     response.json({ ok: true });
   });
   app.post("/api/auth/logout", async (request, response) => {
+    // The route is open to visitors, so only a real sign-out is written into the history.
+    const signedIn = await isAuthenticated(request, store);
     await endSession(store, request, response);
+    if (signedIn) logAdmin("system", "Đăng xuất trang quản trị");
     response.json({ ok: true });
   });
 
@@ -218,6 +253,16 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
     };
     const items = await store.listRecentViolationMessages(violationPageSize, { ...filter, ...(before === undefined ? {} : { before }) });
     response.json(before === undefined ? { items, total: await store.countViolationMessages(filter) } : { items });
+  });
+
+  // The history of what the bot and its admins did, newest first, narrowed down by ?q=, ?category=,
+  // ?actor=, ?result= (ok or failed), ?groupId= and the period ?from= to ?to=. ?before=<at>_<id> continues
+  // after the last entry of the previous page; the first page also says how many entries there are in all.
+  app.get("/api/activity", async (request, response) => {
+    const filter = parseActivityFilter(request.query, maxSearchLength);
+    const before = parseActivityCursor(request.query.before);
+    const items = await store.listActivity(activityPageSize, filter, before);
+    response.json(before === undefined ? { items, total: await store.countActivity(filter) } : { items });
   });
 
   // One page of groups. Searching and filtering happen here, so every page of the table reflects the whole list.
@@ -279,6 +324,10 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
           results.push({ groupId, groupName, ok: false, error: errorMessage(error) });
         }
       }
+      const title = action === "leave" ? "Rời nhóm" : action === "enable" ? "Bật bot" : "Tắt bot";
+      for (const result of results) {
+        if (result.groupName !== "") logAdmin("settings", title, { groupId: result.groupId, groupName: result.groupName, ...outcome(result) });
+      }
       response.json({ results });
     } catch (error: unknown) {
       response.status(502).json({ error: `Không lấy được danh sách nhóm từ Zalo: ${errorMessage(error)}` });
@@ -287,6 +336,7 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
   app.post("/api/groups/sync", async (_request, response) => {
     try {
       await bot.syncAllGroups();
+      logAdmin("system", "Đồng bộ danh sách nhóm");
       response.json({ ok: true });
     } catch (error: unknown) {
       response.status(502).json({ error: errorMessage(error) });
@@ -314,6 +364,8 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
       response.status(404).json({ error: "Không tìm thấy nhóm" });
       return;
     }
+    const rate = (value: RateRule): string => value.enabled ? `${value.count} trong ${value.windowSeconds} giây` : "tắt";
+    logAdmin("settings", "Đổi cài đặt chống spam", { groupId: request.params.groupId, detail: `Gửi dồn dập: ${rate(flood)}; lặp nội dung: ${rate(repeat)}; số điện thoại hoặc số tài khoản: ${contact.enabled ? "bật" : "tắt"}` });
     response.json(await bot.getGroup(request.params.groupId) ?? updated);
   });
   // The bot's own commands across the groups the bot is on in, for the page that sets them up in one place.
@@ -344,7 +396,9 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
         const commands = current.get(groupId);
         // A group the account has left is skipped.
         if (commands === undefined) continue;
-        await store.setGroupCommands(groupId, { random: { enabled: enabled ?? commands.random.enabled, adminOnly: adminOnly ?? commands.random.adminOnly } });
+        const random = { enabled: enabled ?? commands.random.enabled, adminOnly: adminOnly ?? commands.random.adminOnly };
+        await store.setGroupCommands(groupId, { random });
+        logAdmin("replies", "Đổi cài đặt lệnh /random", { groupId, detail: randomDetail(random) });
       }
       response.json(await groupCommandRows());
     } catch (error: unknown) {
@@ -364,6 +418,7 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
       response.status(404).json({ error: "Không tìm thấy nhóm" });
       return;
     }
+    logAdmin("replies", "Đổi cài đặt lệnh /random", { groupId: request.params.groupId, detail: randomDetail(updated.commands.random) });
     response.json(await bot.getGroup(request.params.groupId) ?? updated);
   });
   // Who the bot lets into the group by itself. Saving goes through the waiting list at once.
@@ -384,6 +439,10 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
       response.status(404).json({ error: "Không tìm thấy nhóm" });
       return;
     }
+    logAdmin("approval", "Đổi cài đặt duyệt thành viên", {
+      groupId,
+      detail: settings.enabled ? ["Bật duyệt tự động", settings.requireAvatar ? "cần có ảnh đại diện" : "", settings.minAccountAgeDays > 0 ? `tài khoản Zalo từ ${settings.minAccountAgeDays} ngày` : ""].filter((part) => part !== "").join(", ") : "Tắt duyệt tự động",
+    });
     if (settings.enabled) await approver.process(groupId);
     response.json(await bot.getGroup(groupId) ?? updated);
   });
@@ -433,10 +492,11 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
       response.status(404).json({ error: "Không tìm thấy nhóm" });
       return;
     }
+    logAdmin("settings", "Đổi quy tắc mời ra khỏi nhóm", { groupId: request.params.groupId, detail: `${violationRuleNames[rule]}: ${enabled ? `bật, ${count} lần trong ${windowSeconds} giây` : "tắt"}` });
     response.json(await bot.getGroup(request.params.groupId) ?? updated);
   });
-  registerListRoutes(app, store, "/api/groups/:groupId/blocked-links", "link", blockedLinks, "Link không hợp lệ; hãy nhập dạng example.com hoặc example.com/duong-dan");
-  registerListRoutes(app, store, "/api/groups/:groupId/banned-words", "word", bannedWords, "Từ không hợp lệ; hãy nhập từ hoặc cụm từ dài 2–50 ký tự");
+  registerListRoutes(app, store, "/api/groups/:groupId/blocked-links", "link", blockedLinks, "Link không hợp lệ; hãy nhập dạng example.com hoặc example.com/duong-dan", "link bị chặn", logList);
+  registerListRoutes(app, store, "/api/groups/:groupId/banned-words", "word", bannedWords, "Từ không hợp lệ; hãy nhập từ hoặc cụm từ dài 2–50 ký tự", "từ cấm", logList);
   // One page of the group's members with their Zalo account date and their record in this group.
   // ?q= searches names and IDs, ?sort= is name, violations or newest, ?refresh=1 reads Zalo again.
   app.get("/api/groups/:groupId/members", async (request, response) => {
@@ -483,11 +543,19 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
     }
     try {
       if (action === "clear") {
+        const names = await violatorNames(groupId);
         await store.clearViolations(groupId, userIds);
+        for (const userId of userIds) logAdmin("moderation", "Xóa lịch sử vi phạm", { groupId, userId, userName: names.get(userId) ?? "" });
         response.json({ results: userIds.map((userId) => ({ userId, ok: true })) });
         return;
       }
-      response.json({ results: await bot.removeMembers(groupId, userIds, action === "block") });
+      // Read before the removal: afterwards the members are no longer in the list.
+      const names = await memberNames(groupId);
+      const results = await bot.removeMembers(groupId, userIds, action === "block");
+      for (const result of results) {
+        logAdmin("moderation", action === "block" ? "Mời ra khỏi nhóm và chặn" : "Mời ra khỏi nhóm", { groupId, userId: result.userId, userName: names.get(result.userId) ?? "", ...(result.warning === undefined ? {} : { detail: result.warning }), ...outcome(result) });
+      }
+      response.json({ results });
     } catch (error: unknown) {
       response.status(409).json({ error: errorMessage(error) });
     }
@@ -507,10 +575,17 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
       response.status(400).json({ error: `Hãy chọn từ 1 đến ${maxBulkItems} tài khoản` });
       return;
     }
+    const { groupId } = request.params;
+    const names = new Map((await bot.listBlockedMembers(groupId).catch(() => [])).map((member) => [member.userId, member.name]));
+    const logUnblock = (result: Readonly<{ ok: boolean; error?: string }>): void => {
+      for (const userId of userIds) logAdmin("moderation", "Bỏ chặn thành viên", { groupId, userId, userName: names.get(userId) ?? "", ...outcome(result) });
+    };
     try {
-      await bot.unblockMembers(request.params.groupId, userIds);
-      response.json(await bot.listBlockedMembers(request.params.groupId));
+      await bot.unblockMembers(groupId, userIds);
+      logUnblock({ ok: true });
+      response.json(await bot.listBlockedMembers(groupId));
     } catch (error: unknown) {
+      logUnblock({ ok: false, error: errorMessage(error) });
       response.status(502).json({ error: `Zalo không cho bỏ chặn: ${errorMessage(error)}` });
     }
   });
@@ -530,7 +605,10 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
       response.status(400).json({ error: "userId phải là chuỗi" });
       return;
     }
+    const names = await violatorNames(request.params.groupId);
     await store.clearViolations(request.params.groupId, userIds);
+    if (userIds === undefined) logAdmin("moderation", "Xóa lịch sử vi phạm của cả nhóm", { groupId: request.params.groupId });
+    else for (const id of userIds) logAdmin("moderation", "Xóa lịch sử vi phạm", { groupId: request.params.groupId, userId: id, userName: names.get(id) ?? "" });
     response.json(await store.listViolations(request.params.groupId));
   });
   app.get("/api/groups/:groupId/reminders/:reminderId/responses", async (request, response) => {
@@ -541,10 +619,15 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
     }
   });
   app.delete("/api/groups/:groupId/reminders/:reminderId", async (request, response) => {
+    const { groupId, reminderId } = request.params;
+    const title = (await reminderTitles()).get(`${groupId}:${reminderId}`);
+    const detail = title === undefined ? {} : { detail: `“${title}”` };
     try {
-      await reminders.remove(request.params.groupId, request.params.reminderId);
+      await reminders.remove(groupId, reminderId);
+      logAdmin("messages", "Xóa nhắc hẹn", { groupId, ...detail });
       response.json({ ok: true });
     } catch (error: unknown) {
+      logAdmin("messages", "Xóa nhắc hẹn", { groupId, ...detail, ok: false, error: errorMessage(error) });
       response.status(502).json({ error: `Zalo không cho xóa nhắc hẹn này: ${errorMessage(error)}` });
     }
   });
@@ -565,13 +648,14 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
       response.status(404).json({ error: "Không tìm thấy nhóm" });
       return;
     }
+    logAdmin("settings", `${enabled ? "Bật" : "Tắt"} ${groupSettingNames[setting]}`, { groupId: request.params.groupId });
     response.json(await bot.getGroup(request.params.groupId) ?? updated);
   });
 
   const invalidLink = "Link không hợp lệ; hãy nhập dạng example.com hoặc example.com/duong-dan";
   const invalidWord = "Từ không hợp lệ; hãy nhập từ hoặc cụm từ dài 2–50 ký tự";
-  registerListRoutes(app, store, "/api/blocked-links", "link", blockedLinks, invalidLink);
-  registerListRoutes(app, store, "/api/banned-words", "word", bannedWords, invalidWord);
+  registerListRoutes(app, store, "/api/blocked-links", "link", blockedLinks, invalidLink, "link bị chặn", logList);
+  registerListRoutes(app, store, "/api/banned-words", "word", bannedWords, invalidWord, "từ cấm", logList);
   app.post("/api/banned-words/check", (request, response) => {
     const body: unknown = request.body;
     const text = isRecord(body) ? body.text : undefined;
@@ -605,7 +689,13 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
       const groupIds = new Set((await bot.listGroups()).map((group) => group.groupId));
       const known = valid.filter((item) => groupIds.has(item.groupId));
       const skipped = valid.filter((item) => !groupIds.has(item.groupId)).map((item) => ({ ...item, ok: false, error: "Bot không ở trong nhóm này" }));
-      response.json({ results: [...await reminders.removeMany(known), ...skipped] });
+      const titles = await reminderTitles();
+      const results = await reminders.removeMany(known);
+      for (const result of results) {
+        const title = titles.get(`${result.groupId}:${result.reminderId}`);
+        logAdmin("messages", "Xóa nhắc hẹn", { groupId: result.groupId, ...(title === undefined ? {} : { detail: `“${title}”` }), ...outcome(result) });
+      }
+      response.json({ results: [...results, ...skipped] });
     } catch (error: unknown) {
       response.status(502).json({ error: `Không lấy được danh sách nhóm từ Zalo: ${errorMessage(error)}` });
     }
@@ -626,7 +716,13 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
       return;
     }
     try {
-      response.json({ results: await reminders.create(parsed, parsed.groupIds) });
+      const results = await reminders.create(parsed, parsed.groupIds);
+      for (const result of results) {
+        if (result.groupName === "") continue;
+        const detail = [`“${parsed.title}” lúc ${formatLogTime(parsed.startTime)}`, result.warning ?? ""].filter((part) => part !== "").join(". ");
+        logAdmin("messages", "Tạo nhắc hẹn", { groupId: result.groupId, groupName: result.groupName, detail, ...outcome(result) });
+      }
+      response.json({ results });
     } catch (error: unknown) {
       response.status(502).json({ error: `Không lấy được danh sách nhóm từ Zalo: ${errorMessage(error)}` });
     }
@@ -652,6 +748,11 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
     }
     try {
       const results = parsed.sendNow ? await reminders.sendMessageNow(parsed.message, parsed.groupIds) : await reminders.scheduleMessage(parsed.message, parsed, parsed.groupIds);
+      const preview = previewText(parsed.message.text, parsed.message.images?.length ?? 0);
+      for (const result of results) {
+        if (result.groupName === "") continue;
+        logAdmin("messages", parsed.sendNow ? "Gửi tin nhắn" : "Hẹn giờ tin nhắn", { groupId: result.groupId, groupName: result.groupName, detail: parsed.sendNow ? preview : `${preview} lúc ${formatLogTime(parsed.startTime)}`, ...outcome(result) });
+      }
       response.json({ results });
     } catch (error: unknown) {
       response.status(502).json({ error: `Không lấy được danh sách nhóm từ Zalo: ${errorMessage(error)}` });
@@ -672,12 +773,16 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
       response.status(400).json({ error: edit });
       return;
     }
-    const outcome = await store.updateReminderMessage(request.params.messageId, edit);
-    if (outcome === "missing") response.status(404).json({ error: "Tin nhắn này không còn chờ gửi" });
-    else if (outcome === "empty") response.status(400).json({ error: "Tin nhắn cần có nội dung hoặc ảnh" });
-    else if (outcome === "invalid") response.status(409).json({ error: "Ảnh của tin nhắn đã thay đổi; hãy mở lại để sửa" });
-    else if (outcome === "tooHeavy") response.status(400).json({ error: "Tổng dung lượng ảnh của một tin tối đa 12 MB" });
-    else response.json({ ok: true });
+    const saved = await store.updateReminderMessage(request.params.messageId, edit);
+    if (saved === "missing") response.status(404).json({ error: "Tin nhắn này không còn chờ gửi" });
+    else if (saved === "empty") response.status(400).json({ error: "Tin nhắn cần có nội dung hoặc ảnh" });
+    else if (saved === "invalid") response.status(409).json({ error: "Ảnh của tin nhắn đã thay đổi; hãy mở lại để sửa" });
+    else if (saved === "tooHeavy") response.status(400).json({ error: "Tổng dung lượng ảnh của một tin tối đa 12 MB" });
+    else {
+      const message = (await store.listReminderMessages()).find((item) => item.id === request.params.messageId);
+      if (message !== undefined) logAdmin("messages", "Sửa tin nhắn chờ gửi", { groupId: message.groupId, detail: previewText(message.text, message.imageCount) });
+      response.json({ ok: true });
+    }
   });
   // Cancels several waiting messages at once.
   app.post("/api/reminder-messages/delete", async (request, response) => {
@@ -687,13 +792,18 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
       response.status(400).json({ error: `Hãy chọn từ 1 đến ${maxBulkItems} tin nhắn` });
       return;
     }
-    response.json({ deleted: await store.deleteReminderMessages(ids) });
+    const waiting = (await store.listReminderMessages()).filter((message) => ids.includes(message.id));
+    const deleted = await store.deleteReminderMessages(ids);
+    for (const message of waiting) logAdmin("messages", "Hủy tin nhắn chờ gửi", { groupId: message.groupId, detail: previewText(message.text, message.imageCount) });
+    response.json({ deleted });
   });
   app.delete("/api/reminder-messages/:messageId", async (request, response) => {
+    const waiting = (await store.listReminderMessages()).find((message) => message.id === request.params.messageId);
     if (!await store.deleteReminderMessage(request.params.messageId)) {
       response.status(404).json({ error: "Tin nhắn này không còn chờ gửi" });
       return;
     }
+    if (waiting !== undefined) logAdmin("messages", "Hủy tin nhắn chờ gửi", { groupId: waiting.groupId, detail: previewText(waiting.text, waiting.imageCount) });
     response.json({ ok: true });
   });
 
@@ -719,7 +829,9 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
       response.status(400).json({ error: draft });
       return;
     }
-    answerSave(response, await autoReplies.create(draft));
+    const saved = await autoReplies.create(draft);
+    if (saved === "saved") logAdmin("replies", "Thêm câu trả lời tự động", { detail: draft.triggers.join(", ") });
+    answerSave(response, saved);
   });
   // Switches several answers on or off, or removes them, in one request.
   app.post("/api/auto-replies/bulk", async (request, response) => {
@@ -730,8 +842,11 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
       response.status(400).json({ error: `Hãy chọn từ 1 đến ${maxBulkItems} câu trả lời` });
       return;
     }
+    const chosen = autoReplies.list().filter((rule) => ids.includes(rule.id));
     if (action === "delete") await autoReplies.remove(ids);
     else for (const id of ids) await autoReplies.setEnabled(id, action === "enable");
+    const title = action === "delete" ? "Xóa câu trả lời tự động" : action === "enable" ? "Bật câu trả lời tự động" : "Tắt câu trả lời tự động";
+    for (const rule of chosen) logAdmin("replies", title, { detail: rule.triggers.join(", ") });
     response.json(autoReplies.list());
   });
   app.get("/api/auto-replies/:replyId/images/:index", async (request, response) => {
@@ -749,7 +864,9 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
       response.status(400).json({ error: draft });
       return;
     }
-    answerSave(response, await autoReplies.update(request.params.replyId, draft));
+    const saved = await autoReplies.update(request.params.replyId, draft);
+    if (saved === "saved") logAdmin("replies", "Sửa câu trả lời tự động", { detail: draft.triggers.join(", ") });
+    answerSave(response, saved);
   });
 
   app.use((_request, response) => response.status(404).json({ error: "Not found" }));

@@ -1,4 +1,5 @@
 import { GroupEventType, type API, type GroupEvent } from "zca-js";
+import { noActivity, type ActivityRecorder } from "../activity/activity-log.js";
 import { writeLog } from "../logger.js";
 import type { JoinApplicant, JoinReview, JoinReviewResult, LiveGroupInfo, PendingJoinList, StoredGroup } from "../types.js";
 import { now } from "../utils.js";
@@ -44,6 +45,7 @@ export class JoinApprover {
     private readonly api: ApproverApi,
     private readonly groups: Groups,
     private readonly store: ApproverStore,
+    private readonly activity: ActivityRecorder = noActivity,
   ) {}
 
   // Starts watching for requests, and goes through the waiting lists now and every few minutes.
@@ -151,11 +153,15 @@ export class JoinApprover {
     for (const userId of userIds) {
       const status = statuses[userId] ?? 0;
       const name = names.get(userId) ?? "";
+      const entry = { category: "approval", actor: by === "auto" ? "bot" : "admin", title: approve ? "Duyệt vào nhóm" : "Từ chối vào nhóm", detail: by === "auto" ? "Đạt tiêu chí duyệt tự động" : "", groupId, userId, userName: name } as const;
       if (status === 0) {
         results.push({ userId, name, ok: true });
         await this.store.logJoinReview(groupId, { userId, userName: name, decision: approve ? "approved" : "rejected", by, reasons: [...reasons] });
+        this.activity.record(entry);
       } else {
-        results.push({ userId, name, ok: false, error: reviewErrors[status] ?? `Zalo báo lỗi mã ${status}` });
+        const error = reviewErrors[status] ?? `Zalo báo lỗi mã ${status}`;
+        results.push({ userId, name, ok: false, error });
+        this.activity.record({ ...entry, ok: false, error });
       }
     }
     return results;

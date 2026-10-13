@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { AutoReplies, type AutoReplyStore } from "../auto-reply/auto-replies.js";
 import type { GroupMessageContext } from "../bot/feature.js";
-import type { AutoReplyRule, MemberProfile, MessageImage } from "../types.js";
+import type { AutoReplyRule, MemberProfile, MessageImage, NewActivity } from "../types.js";
 import { AutoReplyFeature } from "./auto-reply.js";
 
 const rule = (id: string, overrides: Partial<AutoReplyRule>): AutoReplyRule => ({
@@ -13,6 +13,7 @@ const rule = (id: string, overrides: Partial<AutoReplyRule>): AutoReplyRule => (
 async function setup(rules: AutoReplyRule[], options: { refuseQuote?: boolean; images?: MessageImage[]; random?: { enabled: boolean; adminOnly: boolean }; members?: MemberProfile[]; complete?: boolean } = {}) {
   const sent: { msg: string; quoted: boolean; attachments: number; groupId: string; mentions?: { pos: number; uid: string; len: number }[] }[] = [];
   const counted: string[] = [];
+  const history: NewActivity[] = [];
   const store: AutoReplyStore = {
     listAutoReplies: () => Promise.resolve(rules),
     createAutoReply: () => Promise.resolve("saved"),
@@ -31,10 +32,10 @@ async function setup(rules: AutoReplyRule[], options: { refuseQuote?: boolean; i
   } as unknown as ConstructorParameters<typeof AutoReplyFeature>[0];
   const replies = await AutoReplies.load(store);
   const members = { ownId: "bot", listMembers: () => Promise.resolve({ members: options.members ?? [], complete: options.complete ?? true }) };
-  const feature = new AutoReplyFeature(api, replies, members);
+  const feature = new AutoReplyFeature(api, replies, members, { record: (entry) => history.push(entry) });
   const group = { commands: { random: options.random ?? { enabled: false, adminOnly: false } } };
-  const say = (content: unknown, groupId = "g1", senderIsAdmin = false) => feature.onGroupMessage({ message: { data: { content, msgId: "m1" } }, groupId, userId: "u1", group, senderIsAdmin } as unknown as GroupMessageContext);
-  return { say, sent, counted, replies };
+  const say = (content: unknown, groupId = "g1", senderIsAdmin = false) => feature.onGroupMessage({ message: { data: { content, msgId: "m1", dName: "An" } }, groupId, userId: "u1", group, senderIsAdmin } as unknown as GroupMessageContext);
+  return { say, sent, counted, replies, history };
 }
 
 await test("answers a keyword by quoting the message, and counts the answer", async () => {
@@ -142,4 +143,16 @@ await test("an admin's own /random answer is used while the built-in command is 
   const switchedOn = await setup([own], { random: on });
   await switchedOn.say("/random 1-1");
   assert.deepEqual(switchedOn.sent.map((item) => item.msg), ["🎲 Số ngẫu nhiên từ 1 đến 1: 1"]);
+});
+
+await test("every answer goes into the history, and so does one that could not be sent", async () => {
+  const { say, history } = await setup([rule("r1", {})], { random: on });
+  await say("cho hỏi giá với");
+  await say("/random 5-5");
+  // Nothing is written for a message that gets no answer.
+  await say("chào cả nhà");
+  assert.deepEqual(history, [
+    { category: "replies", actor: "bot", title: "Trả lời từ khóa", detail: "giá → “Bảng giá ở tin ghim”", groupId: "g1", userId: "u1", userName: "An" },
+    { category: "replies", actor: "bot", title: "Trả lời lệnh /random", detail: "“/random 5-5”", groupId: "g1", userId: "u1", userName: "An" },
+  ]);
 });

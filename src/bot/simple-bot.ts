@@ -1,4 +1,5 @@
 import { ThreadType, type API, type GroupEvent, type Message } from "zca-js";
+import { noActivity, type ActivityRecorder } from "../activity/activity-log.js";
 import { writeLog } from "../logger.js";
 import type { Store } from "../storage/store.js";
 import type { AdminGroupView, BlockedMember, BotStatus, LiveGroupInfo, MemberProfile, MemberRemoval, StoredGroup } from "../types.js";
@@ -37,8 +38,9 @@ export class SimpleBot {
     private readonly store: Store,
     public readonly ownId: string,
     private readonly features: readonly BotFeature[],
+    private readonly activity: ActivityRecorder = noActivity,
   ) {
-    this.enforcer = new Enforcer(api, store);
+    this.enforcer = new Enforcer(api, store, activity);
   }
 
   public async start(): Promise<void> {
@@ -306,6 +308,7 @@ export class SimpleBot {
     if (this.connected === connected) return;
     this.connected = connected;
     this.connectionChangedAt = now();
+    this.activity.record(connected ? { category: "system", actor: "bot", title: "Kết nối Zalo" } : { category: "system", actor: "bot", title: "Mất kết nối Zalo", ok: false });
   }
 
   private async currentGroup(groupId: string): Promise<LiveGroupInfo | undefined> {

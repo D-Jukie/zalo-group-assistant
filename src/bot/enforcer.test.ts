@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ThreadType, type Message } from "zca-js";
+import type { NewActivity } from "../types.js";
 import { defaultKickRules, defaultGroupCommands, defaultJoinApproval, defaultSpamSettings, type KickRules, type StoredGroup } from "../types.js";
 import { Enforcer, type EnforcerApi, type EnforcerStore } from "./enforcer.js";
 
@@ -16,6 +17,7 @@ type Scenario = Readonly<{
 
 function setup(scenario: Scenario = {}) {
   const calls: string[] = [];
+  const history: NewActivity[] = [];
   const api = {
     deleteMessage: () => {
       calls.push("delete");
@@ -71,8 +73,8 @@ function setup(scenario: Scenario = {}) {
     isSelf: false,
     data: { uidFrom: "u1", dName: "Member", msgId: "m1", cliMsgId: "c1", msgType: "webchat", content: "hello" },
   } as unknown as Message;
-  const report = new Enforcer(api, store).forMessage({ message, group, botIsAdmin: scenario.botIsAdmin ?? true });
-  return { calls, report };
+  const report = new Enforcer(api, store, { record: (entry) => history.push(entry) }).forMessage({ message, group, botIsAdmin: scenario.botIsAdmin ?? true });
+  return { calls, report, history };
 }
 
 const neverKick: KickRules = defaultKickRules;
@@ -152,4 +154,20 @@ await test("does not record a kick that Zalo rejected", async () => {
   await report("link", "zalo.me/g/x");
   assert.ok(calls.includes("kick"));
   assert.ok(!calls.includes("recordKick"));
+});
+
+await test("what the bot did to a message and its sender goes into the history", async () => {
+  const done = setup({ kickRules: kickLinksAt3, recent: 3 });
+  await done.report("link", "zalo.me/g/x");
+  assert.deepEqual(done.history, [
+    { category: "moderation", actor: "bot", title: "Xóa tin nhắn vi phạm", detail: "Link: zalo.me/g/x", groupId: "g1", userId: "u1", userName: "Member" },
+    { category: "moderation", actor: "bot", title: "Mời ra khỏi nhóm", detail: "Vi phạm Link 3 lần", groupId: "g1", userId: "u1", userName: "Member" },
+  ]);
+  const failed = setup({ failDelete: true, kickRules: kickLinksAt3, recent: 3, rejectKick: true });
+  await failed.report("link", "zalo.me/g/x");
+  assert.deepEqual(failed.history.map((entry) => [entry.title, entry.ok, entry.error]), [["Xóa tin nhắn vi phạm", false, "refused"], ["Mời ra khỏi nhóm", false, "Zalo từ chối xóa thành viên này"]]);
+  // Without admin rights the bot does nothing, so there is nothing to write down.
+  const watching = setup({ botIsAdmin: false });
+  await watching.report("link", "zalo.me/g/x");
+  assert.deepEqual(watching.history, []);
 });

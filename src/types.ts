@@ -354,3 +354,47 @@ export type ReminderCreateResult = Readonly<{ groupId: string; groupName: string
 export type ReminderMember = Readonly<{ userId: string; name: string }>;
 
 export type ReminderResponses = Readonly<{ accepted: readonly ReminderMember[]; rejected: readonly ReminderMember[] }>;
+
+// What a rule is called in the history and in messages to admins.
+export const violationRuleNames: Readonly<Record<ViolationRule, string>> = { link: "Link", badWord: "Từ cấm", spam: "Spam" };
+
+// The history of what the bot did by itself and what admins did from the dashboard, by what it was about.
+export const activityCategories = ["moderation", "approval", "replies", "messages", "settings", "system"] as const;
+export type ActivityCategory = (typeof activityCategories)[number];
+
+// Who did it: the bot by itself, or an admin from the dashboard.
+export const activityActors = ["bot", "admin"] as const;
+export type ActivityActor = (typeof activityActors)[number];
+
+// Something to write into the history. What is left out is empty; `ok` is true unless said otherwise.
+export type NewActivity = Readonly<{
+  category: ActivityCategory;
+  actor: ActivityActor;
+  // What was done, in a few words: "Xóa tin nhắn vi phạm".
+  title: string;
+  // What it was done to or with.
+  detail?: string;
+  ok?: boolean;
+  // Why it did not work.
+  error?: string;
+  groupId?: string;
+  groupName?: string;
+  // The member it was about.
+  userId?: string;
+  userName?: string;
+}>;
+
+export type ActivityEntry = Readonly<Required<NewActivity> & { id: string; at: number }>;
+
+// What the history can be narrowed down by. Every part is optional.
+export type ActivityFilter = Readonly<{
+  // Found in what was done, its detail or error, the group's name or the member's name or ID.
+  text?: string;
+  category?: ActivityCategory;
+  actor?: ActivityActor;
+  ok?: boolean;
+  groupId?: string;
+  // The period it happened in, both ends included.
+  from?: number;
+  to?: number;
+}>;

@@ -1,7 +1,8 @@
 import { ThreadType, type API, type Message } from "zca-js";
+import { noActivity, type ActivityRecorder } from "../activity/activity-log.js";
 import { writeLog } from "../logger.js";
 import type { Store } from "../storage/store.js";
-import type { StoredGroup, ViolationRule } from "../types.js";
+import { violationRuleNames, type StoredGroup, type ViolationRule } from "../types.js";
 import { isRecord } from "../utils.js";
 
 const maxLoggedTextLength = 2_000;
@@ -37,7 +38,7 @@ export class Enforcer {
   private readonly kickInFlight = new Set<string>();
   private handledMessages = 0;
 
-  public constructor(private readonly api: EnforcerApi, private readonly store: EnforcerStore) {}
+  public constructor(private readonly api: EnforcerApi, private readonly store: EnforcerStore, private readonly activity: ActivityRecorder = noActivity) {}
 
   // How many messages were reported as violations since the bot started.
   public get handledMessageCount(): number {
@@ -61,7 +62,7 @@ export class Enforcer {
       }
       // Deleting needs admin rights. It starts right away and does not wait for the database,
       // so a slow or failing database never leaves the message in the group.
-      if (botIsAdmin) deletion ??= this.deleteMessage(message, messageId);
+      if (botIsAdmin) deletion ??= this.deleteMessage(message, messageId, rule, detail);
       const kickRule = group.kickRules[rule];
       const canKick = botIsAdmin && kickRule.enabled;
       let recent: number | undefined;
@@ -90,12 +91,13 @@ export class Enforcer {
         ...(recent === undefined ? {} : { recent: `${recent}/${kickRule.count} trong ${kickRule.windowSeconds}s` }),
       });
       await deletion;
-      if (recent !== undefined && recent >= kickRule.count) await this.kick(groupId, userId, rule, recent);
+      if (recent !== undefined && recent >= kickRule.count) await this.kick(groupId, userId, message.data.dName, rule, recent);
     };
   }
 
-  private async deleteMessage(message: Message, messageId: string): Promise<boolean> {
+  private async deleteMessage(message: Message, messageId: string, rule: ViolationRule, detail: string): Promise<boolean> {
     const fields = { group: message.threadId, user: message.data.uidFrom, msg: messageId };
+    const entry = { category: "moderation", actor: "bot", title: "Xóa tin nhắn vi phạm", detail: `${violationRuleNames[rule]}: ${detail}`, groupId: message.threadId, userId: message.data.uidFrom, userName: message.data.dName } as const;
     try {
       await this.api.deleteMessage({
         data: { cliMsgId: message.data.cliMsgId, msgId: message.data.msgId, uidFrom: message.data.uidFrom },
@@ -103,30 +105,36 @@ export class Enforcer {
         type: ThreadType.Group,
       }, false);
       writeLog("[MESSAGE DELETED]", "green", fields);
+      this.activity.record(entry);
       return true;
     } catch (error: unknown) {
       writeLog("[MESSAGE DELETE FAILED]", "red", { ...fields, error: errorMessage(error) }, "error");
+      this.activity.record({ ...entry, ok: false, error: errorMessage(error) });
       return false;
     }
   }
 
-  private async kick(groupId: string, userId: string, rule: ViolationRule, recent: number): Promise<void> {
+  private async kick(groupId: string, userId: string, userName: string, rule: ViolationRule, recent: number): Promise<void> {
     const key = `${groupId}:${userId}`;
     if (this.kickInFlight.has(key)) return;
     this.kickInFlight.add(key);
     const fields = { rule, group: groupId, user: userId, recent: String(recent) };
+    const entry = { category: "moderation", actor: "bot", title: "Mời ra khỏi nhóm", detail: `Vi phạm ${violationRuleNames[rule]} ${recent} lần`, groupId, userId, userName } as const;
     try {
       const result = await this.api.removeUserFromGroup(userId, groupId);
       if (result.errorMembers.includes(userId)) {
         // Nothing is reset, so the next violation inside the window tries again.
         writeLog("[KICK REJECTED]", "yellow", fields, "warn");
+        this.activity.record({ ...entry, ok: false, error: "Zalo từ chối xóa thành viên này" });
         return;
       }
       // Violations before a kick no longer count towards the next one.
       await this.store.recordKick(groupId, userId);
       writeLog("[KICKED]", "magenta", fields);
+      this.activity.record(entry);
     } catch (error: unknown) {
       writeLog("[KICK FAILED]", "red", { ...fields, error: errorMessage(error) }, "error");
+      this.activity.record({ ...entry, ok: false, error: errorMessage(error) });
     } finally {
       this.kickInFlight.delete(key);
     }
