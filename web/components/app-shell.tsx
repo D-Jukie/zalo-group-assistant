@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarClock, History, LayoutDashboard, LogOut, Megaphone, MessagesSquare, ScrollText, Settings, ShieldCheck, Users, type LucideIcon } from "lucide-react";
+import { CalendarClock, ChartColumn, History, LayoutDashboard, LogOut, Megaphone, MessagesSquare, ScrollText, Settings, ShieldCheck, Users, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState, type ReactNode } from "react";
@@ -36,6 +36,7 @@ const navigation: readonly { title: string; items: readonly NavigationItem[] }[]
       { href: "/auto-replies", label: "Trả lời tự động", icon: MessagesSquare, match: ["/auto-replies"] },
       { href: "/broadcast", label: "Gửi tin nhắn hàng loạt", icon: Megaphone, match: ["/broadcast"] },
       { href: "/reminders", label: "Lịch nhắc hẹn", icon: CalendarClock, match: ["/reminders"] },
+      { href: "/polls", label: "Bình chọn", icon: ChartColumn, match: ["/polls"] },
     ],
   },
   {

@@ -14,7 +14,7 @@ Bot sẽ:
 - Hoạt động cả ở nhóm bot không phải QTV: ở đó bot chỉ ghi nhận vi phạm, không xóa tin và không kick.
 - Hiển thị mọi nhóm tài khoản bot đang tham gia trên dashboard.
 - Không có lệnh chat để bật/tắt hoặc kick; mọi thao tác cấu hình thực hiện trên dashboard.
-- Không xử lý poll/vote và không lưu danh sách bình chọn.
+- Tạo bình chọn của Zalo cho nhiều nhóm và đọc lại kết quả (xem [Bình chọn](#bình-chọn)). Bot không phản ứng với bình chọn do thành viên tạo.
 
 QR được xử lý cục bộ, không gửi ảnh sang dịch vụ bên ngoài. Ảnh được giới hạn 8 MB, JPEG tối đa 12 MP/64 MB bộ nhớ giải mã và thời gian tải tối đa 5 giây để tránh làm nặng bot.
 
@@ -55,6 +55,7 @@ Dashboard là ứng dụng Next.js (App Router, Tailwind CSS, SWR) trong `web/`.
 | `/reminders` | Lịch nhắc hẹn của Zalo ở mọi nhóm đang bật bot: nội dung, giờ bắt đầu, số người tham gia và từ chối, danh sách thành viên đã trả lời |
 | `/reminders/new` | Tạo một nhắc hẹn cho một hoặc nhiều nhóm cùng lúc |
 | `/broadcast` | Gửi tin nhắn hàng loạt: một tin của bot cho một hoặc nhiều nhóm, gửi ngay hoặc hẹn giờ, đánh dấu quan trọng hoặc khẩn cấp; tab `Tin nhắn đã gửi` liệt kê các đợt đã gửi và cho thu hồi cả đợt |
+| `/polls` | Bình chọn: tạo một bình chọn cho một hoặc nhiều nhóm, xem ai đã chọn gì và ai chưa bình chọn, khóa bình chọn, xuất kết quả ra Excel |
 | `/auto-replies` | Trả lời tự động: bot trả lời khi thành viên nhắn một từ khóa hoặc gõ một lệnh như `/huongdan` |
 | `/activity` | Lịch sử hoạt động: những việc bot tự làm và những thao tác từ trang quản trị, có tìm kiếm và bộ lọc |
 | `/setting` | Cài đặt của chính bảng điều khiển: sáng/tối, tự làm mới, số nhóm mỗi trang, kết nối tới bot, đăng xuất |
@@ -245,6 +246,22 @@ Nút `Thu hồi` thu hồi tin của đợt đó ở mọi nhóm đã nhận, l�
 - Chỉ tin gửi từ `/broadcast` mới thành đợt. Tin của nhắc hẹn và câu trả lời tự động không nằm ở đây.
 
 Khi soạn tin ở `/broadcast` có thể chọn **mức độ**: `Bình thường`, `Quan trọng` hoặc `Khẩn cấp`; Zalo đánh dấu tin tương ứng trong nhóm.
+
+## Bình chọn
+
+Trang `/polls` tạo bình chọn của Zalo ở nhiều nhóm cùng lúc và đọc lại kết quả.
+
+**Tạo.** Chọn nhóm (chỉ nhóm đang bật bot), nhập câu hỏi (tối đa 200 ký tự) và từ 2 đến 30 lựa chọn, rồi đặt thời hạn nếu muốn (tới giờ đó Zalo tự đóng bình chọn; để trống thì bình chọn mở cho tới khi bị khóa), và bật các tùy chọn cần dùng: cho chọn nhiều lựa chọn, cho thành viên thêm lựa chọn, ẩn kết quả khi chưa bình chọn, bình chọn ẩn danh. Bot tạo lần lượt ở từng nhóm và báo kết quả của từng nhóm. Zalo giữ một bình chọn riêng cho mỗi nhóm; bot lưu mã của chúng trong MongoDB (collection `polls`) để đọc lại kết quả.
+
+**Kết quả.** Tab `Bình chọn đã tạo` liệt kê 50 bình chọn gần nhất. `Xem kết quả` đọc trực tiếp từ Zalo cho từng nhóm: số phiếu và tỉ lệ của mỗi lựa chọn, tên những người đã chọn, và danh sách thành viên chưa bình chọn. `Đọc lại` hỏi Zalo lần nữa; trang không tự làm mới phần này.
+
+**Xuất Excel.** `Xuất chi tiết` cho một dòng mỗi lượt chọn (nhóm, thành viên, ID Zalo, lựa chọn), kèm các thành viên chưa bình chọn. `Xuất tổng hợp` cho số phiếu và tỉ lệ của từng lựa chọn theo nhóm.
+
+- Bình chọn ẩn danh chỉ có số phiếu: Zalo không cho biết ai đã chọn gì, nên cũng không tính được ai chưa bình chọn.
+- Tỉ lệ tính trên số người đã bình chọn; với bình chọn cho chọn nhiều, tổng các tỉ lệ có thể vượt 100%.
+- "Chưa bình chọn" là thành viên hiện tại của nhóm mà chưa chọn gì. Người đã bình chọn rồi rời nhóm vẫn có trong kết quả, ghi bằng ID.
+- `Khóa` đóng bình chọn ở mọi nhóm và không mở lại được từ đây. `Bỏ khỏi danh sách` chỉ xóa khỏi trang này; bình chọn vẫn còn trong các nhóm trên Zalo.
+- Chỉ đọc được kết quả của bình chọn tạo từ trang này.
 
 ## Định dạng tin nhắn
 

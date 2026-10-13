@@ -14,6 +14,7 @@ import { LinkGuardFeature } from "./features/link-guard.js";
 import { SpamGuardFeature } from "./features/spam-guard.js";
 import { BannedWords } from "./moderation/banned-words.js";
 import { BlockedLinks } from "./moderation/blocked-links.js";
+import { PollBoard } from "./polls/poll-board.js";
 import { ReminderBoard } from "./reminders/reminder-board.js";
 import { ReminderMessenger } from "./reminders/reminder-messenger.js";
 import { Store } from "./storage/store.js";
@@ -82,7 +83,7 @@ async function main(): Promise<void> {
     reminderMessenger.stop();
     approver.stop();
   };
-  gate.open(createAdminApp(bot, store, blockedLinks, bannedWords, reminders, approver, autoReplies, activity), loginCodes);
+  gate.open(createAdminApp(bot, store, blockedLinks, bannedWords, reminders, approver, autoReplies, new PollBoard(api, bot), activity), loginCodes);
 }
 
 void main().catch((error: unknown) => {

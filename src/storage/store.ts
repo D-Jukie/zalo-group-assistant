@@ -5,6 +5,7 @@ import type { EncryptedSecret } from "./secret-box.js";
 import { asNumber, asString, escapeRegExp, isRecord, now, uniqueStrings } from "../utils.js";
 import { maxMessageImagesBytes, totalImageBytes } from "../reminders/reminder.js";
 import { searchPattern } from "./search-pattern.js";
+import type { StoredPoll } from "../polls/poll.js";
 
 type GroupDocument = {
   _id: string;
@@ -104,6 +105,13 @@ type SentBatchDocument = Omit<SentBatch, "id" | "groups"> & {
   savedAt: Date;
 };
 
+// A poll made from the dashboard. It is kept until it is removed from the list there.
+type PollDocument = Omit<StoredPoll, "id" | "options" | "groups"> & { _id: string; options: string[]; groups: StoredPoll["groups"][number][] };
+
+function toStoredPoll({ _id, ...poll }: PollDocument): StoredPoll {
+  return { id: _id, ...poll };
+}
+
 function toSentBatch(document: SentBatchDocument): SentBatch {
   return {
     id: document._id,
@@ -185,6 +193,7 @@ export class Store {
     private readonly autoReplies: Collection<AutoReplyDocument>,
     private readonly activity: Collection<ActivityDocument>,
     private readonly sentBatches: Collection<SentBatchDocument>,
+    private readonly polls: Collection<PollDocument>,
   ) {}
 
   public static async open(uri: string, databaseName: string): Promise<Store> {
@@ -204,6 +213,7 @@ export class Store {
       database.collection<AutoReplyDocument>("auto_replies"),
       database.collection<ActivityDocument>("activity_log"),
       database.collection<SentBatchDocument>("sent_batches"),
+      database.collection<PollDocument>("polls"),
     );
     // MongoDB removes expired sessions on its own.
     await store.sessions.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
@@ -220,6 +230,7 @@ export class Store {
     await store.activity.createIndex({ createdAt: 1 }, { expireAfterSeconds: activityRetentionDays * 24 * 60 * 60 });
     await store.reminderMessages.createIndex({ dueAt: 1 });
     await store.sentBatches.createIndex({ createdAt: -1 });
+    await store.polls.createIndex({ createdAt: -1 });
     await store.sentBatches.createIndex({ savedAt: 1 }, { expireAfterSeconds: sentBatchRetentionDays * 24 * 60 * 60 });
     await store.reminderMessages.createIndex({ groupId: 1, reminderId: 1 });
     return store;
@@ -642,6 +653,26 @@ export class Store {
   // Files what was sent to one group under a round of sending, starting the round when this is its first group.
   public async addSentBatchGroup(id: string, batch: Omit<SentBatch, "id" | "groups">, group: SentBatchGroup): Promise<void> {
     await this.sentBatches.updateOne({ _id: id }, { $setOnInsert: { ...batch, savedAt: new Date() }, $push: { groups: group } }, { upsert: true });
+  }
+
+  public async addPoll(poll: StoredPoll): Promise<void> {
+    const { id, ...fields } = poll;
+    await this.polls.insertOne({ _id: id, ...fields, options: [...poll.options], groups: [...poll.groups] });
+  }
+
+  // The latest polls made from the dashboard, newest first.
+  public async listPolls(limit: number): Promise<StoredPoll[]> {
+    return (await this.polls.find({}, { sort: { createdAt: -1 }, limit }).toArray()).map(toStoredPoll);
+  }
+
+  public async getPoll(id: string): Promise<StoredPoll | undefined> {
+    const document = await this.polls.findOne({ _id: id });
+    return document === null ? undefined : toStoredPoll(document);
+  }
+
+  // Forgets a poll here. The polls themselves stay in their groups on Zalo.
+  public async deletePoll(id: string): Promise<boolean> {
+    return (await this.polls.deleteOne({ _id: id })).deletedCount === 1;
   }
 
   // The latest rounds of sending, newest first.

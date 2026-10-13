@@ -228,6 +228,36 @@ export type GroupActionResult = { groupId: string; groupName: string; ok: boolea
 // `warning` is set when the reminder was created but one of its messages could not be sent or scheduled.
 export type ReminderCreateResult = { groupId: string; groupName: string; ok: boolean; error?: string; warning?: string };
 
+// A poll made from the dashboard: one question put to several groups. `pollId` is Zalo's id of the poll in a group.
+export type Poll = {
+  id: string;
+  createdAt: number;
+  question: string;
+  options: string[];
+  allowMultiChoices: boolean;
+  allowAddNewOption: boolean;
+  hideVotePreview: boolean;
+  isAnonymous: boolean;
+  // When the poll closes by itself; missing for one that stays open.
+  expiresAt?: number;
+  groups: { groupId: string; groupName: string; ok: boolean; error?: string; pollId?: number }[];
+};
+
+export type PollVoter = { userId: string; name: string };
+
+// One group's votes. An anonymous poll has counts only, and nobody listed as not having voted.
+export type PollGroupResults = {
+  groupId: string;
+  groupName: string;
+  error?: string;
+  closed: boolean;
+  anonymous: boolean;
+  memberCount: number;
+  voterCount: number;
+  options: { content: string; votes: number; voters: PollVoter[] }[];
+  notVoted: PollVoter[];
+};
+
 // How a message is marked in the group; "normal" is an ordinary one.
 export type MessageUrgency = "important" | "urgent";
 

@@ -10,6 +10,8 @@ import { describeSettingsChange, parseZaloSettingsChange } from "../bot/zalo-set
 import type { BannedWords } from "../moderation/banned-words.js";
 import type { BlockedLinks } from "../moderation/blocked-links.js";
 import { parseMessageRequest, parseReminderMessageEdit, parseReminderRequest } from "../reminders/reminder.js";
+import { parsePollRequest } from "../polls/poll.js";
+import type { PollBoard } from "../polls/poll-board.js";
 import type { ReminderBoard } from "../reminders/reminder-board.js";
 import type { Store } from "../storage/store.js";
 import { violationMessageStatuses, violationRuleNames, violationRules, type ActivityCategory, type NewActivity, type GroupMember, type GroupSetting, type RateRule, type ViolationLogFilter, type ViolationRule, type ReminderCreateResult } from "../types.js";
@@ -36,6 +38,7 @@ const violationPageSize = 30;
 const activityPageSize = 50;
 // How many rounds of sending the bulk messaging page lists.
 const sentBatchListSize = 50;
+const pollListSize = 50;
 // What each per-group switch is called in the history.
 const groupSettingNames: Readonly<Record<GroupSetting, string>> = { botEnabled: "bot", linkGuardEnabled: "chặn link", badWordFilterEnabled: "lọc từ cấm", spamGuardEnabled: "chống spam" };
 const defaultGroupPageSize = 25;
@@ -129,7 +132,7 @@ function registerListRoutes(app: Express, store: Store, base: string, field: str
 }
 
 // The JSON API behind the dashboard in web/. It serves no pages of its own.
-export function createAdminApp(bot: SimpleBot, store: Store, blockedLinks: BlockedLinks, bannedWords: BannedWords, reminders: ReminderBoard, approver: JoinApprover, autoReplies: AutoReplies, activity: ActivityRecorder = noActivity): Express {
+export function createAdminApp(bot: SimpleBot, store: Store, blockedLinks: BlockedLinks, bannedWords: BannedWords, reminders: ReminderBoard, approver: JoinApprover, autoReplies: AutoReplies, polls: PollBoard, activity: ActivityRecorder = noActivity): Express {
   const app = express();
   // What an admin does from the dashboard goes into the history, next to what the bot does by itself.
   const logAdmin = (category: ActivityCategory, title: string, more: Omit<NewActivity, "category" | "actor" | "title"> = {}): void => activity.record({ category, actor: "admin", title, ...more });
@@ -831,6 +834,61 @@ export function createAdminApp(bot: SimpleBot, store: Store, blockedLinks: Block
     } catch (error: unknown) {
       response.status(502).json({ error: `Không lấy được danh sách nhóm từ Zalo: ${errorMessage(error)}` });
     }
+  });
+  // The polls made from the dashboard, newest first. Their votes are read separately, from Zalo.
+  app.get("/api/polls", async (_request, response) => {
+    response.json(await store.listPolls(pollListSize));
+  });
+  // One poll for several groups. The answer is the poll as it was kept, with what happened in each group.
+  app.post("/api/polls", async (request, response) => {
+    const parsed = parsePollRequest(request.body, now());
+    if (typeof parsed === "string") {
+      response.status(400).json({ error: parsed });
+      return;
+    }
+    try {
+      const groups = await polls.create(parsed.poll, parsed.groupIds);
+      const poll = { id: randomUUID(), createdAt: now(), ...parsed.poll, groups };
+      // A poll that reached no group has nothing to read results from, so it is not kept.
+      if (groups.some((group) => group.ok)) await store.addPoll(poll);
+      for (const group of groups) {
+        if (group.groupName === "") continue;
+        logAdmin("messages", "Tạo bình chọn", { groupId: group.groupId, groupName: group.groupName, detail: `“${parsed.poll.question}”`, ...outcome(group) });
+      }
+      response.json(poll);
+    } catch (error: unknown) {
+      response.status(502).json({ error: `Không lấy được danh sách nhóm từ Zalo: ${errorMessage(error)}` });
+    }
+  });
+  // Who voted for what in each group of a poll, read from Zalo now.
+  app.get("/api/polls/:pollId/results", async (request, response) => {
+    const poll = await store.getPoll(request.params.pollId);
+    if (poll === undefined) {
+      response.status(404).json({ error: "Không tìm thấy bình chọn này" });
+      return;
+    }
+    response.json({ groups: await polls.results(poll) });
+  });
+  // Closes a poll in every group it was created in.
+  app.post("/api/polls/:pollId/lock", async (request, response) => {
+    const poll = await store.getPoll(request.params.pollId);
+    if (poll === undefined) {
+      response.status(404).json({ error: "Không tìm thấy bình chọn này" });
+      return;
+    }
+    const results = await polls.lock(poll);
+    for (const result of results) logAdmin("messages", "Khóa bình chọn", { groupId: result.groupId, groupName: result.groupName, detail: `“${poll.question}”`, ...outcome(result) });
+    response.json({ results });
+  });
+  // Takes a poll off the dashboard's list. It stays in its groups on Zalo.
+  app.delete("/api/polls/:pollId", async (request, response) => {
+    const poll = await store.getPoll(request.params.pollId);
+    if (poll === undefined || !await store.deletePoll(poll.id)) {
+      response.status(404).json({ error: "Không tìm thấy bình chọn này" });
+      return;
+    }
+    logAdmin("messages", "Bỏ bình chọn khỏi danh sách", { detail: `“${poll.question}”` });
+    response.json({ ok: true });
   });
   // The latest rounds of sending from the bulk messaging page, newest first.
   app.get("/api/sent-batches", async (_request, response) => {
