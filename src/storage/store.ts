@@ -1,9 +1,10 @@
-import { MongoClient, ObjectId, type Binary, type Collection, type UpdateFilter } from "mongodb";
+import { MongoClient, ObjectId, type Binary, type Collection, type Filter, type UpdateFilter } from "mongodb";
 import { GroupEventType, type GroupInfo } from "zca-js";
-import { defaultKickRules, defaultSpamSettings, violationRules, type DailyViolations, type GroupSetting, type JsonRecord, type KickRule, type KickRules, type MemberViolations, type MessageImage, type PendingReminderMessage, type RecentViolation, type ReminderMessageEdit, type ReminderRepeat, type ScheduledReminderMessage, type SpamSettings, type StoredGroup, type ViolationMatch, type ViolationMessage, type ViolationMessageStatus, type ViolationRule } from "../types.js";
+import { defaultKickRules, defaultSpamSettings, violationRules, type DailyViolations, type GroupSetting, type JsonRecord, type KickRule, type KickRules, type MemberViolations, type MessageImage, type PendingReminderMessage, type RecentViolation, type ReminderMessageEdit, type ViolationLogFilter, type ReminderRepeat, type ScheduledReminderMessage, type SpamSettings, type StoredGroup, type ViolationMatch, type ViolationMessage, type ViolationMessageStatus, type ViolationRule } from "../types.js";
 import type { EncryptedSecret } from "./secret-box.js";
 import { asNumber, asString, escapeRegExp, isRecord, now, uniqueStrings } from "../utils.js";
 import { maxMessageImagesBytes, totalImageBytes } from "../reminders/reminder.js";
+import { searchPattern } from "./search-pattern.js";
 
 type GroupDocument = {
   _id: string;
@@ -294,12 +295,11 @@ export class Store {
 
   // The latest violating messages across every group, newest first.
   // filter.before pages backwards through the log; filter.rule keeps only messages that broke that rule.
-  public async listRecentViolationMessages(limit: number, filter: Readonly<{ before?: number; rule?: ViolationRule }> = {}): Promise<RecentViolation[]> {
-    const query = {
-      ...(filter.before === undefined ? {} : { at: { $lt: filter.before } }),
-      ...(filter.rule === undefined ? {} : { "matches.rule": filter.rule }),
-    };
-    const documents = await this.violationMessages.find(query).sort({ at: -1 }).limit(limit).toArray();
+  // The logged messages that pass the filter, newest first. `before` continues from an earlier page.
+  public async listRecentViolationMessages(limit: number, filter: ViolationLogFilter & Readonly<{ before?: number }> = {}): Promise<RecentViolation[]> {
+    const conditions = await this.violationConditions(filter);
+    if (filter.before !== undefined) conditions.push({ at: { $lt: filter.before } });
+    const documents = await this.violationMessages.find(conditions.length === 0 ? {} : { $and: conditions }).sort({ at: -1 }).limit(limit).toArray();
     const groupIds = Array.from(new Set(documents.map((document) => document.groupId)));
     const groups = await this.groups.find({ _id: { $in: groupIds } }, { projection: { name: 1 } }).toArray();
     const names = new Map(groups.map((group) => [group._id, group.name]));
@@ -308,6 +308,37 @@ export class Store {
       groupId: document.groupId,
       groupName: names.get(document.groupId) ?? document.groupId,
     }));
+  }
+
+  // How many logged messages pass the filter.
+  public async countViolationMessages(filter: ViolationLogFilter): Promise<number> {
+    const conditions = await this.violationConditions(filter);
+    return this.violationMessages.countDocuments(conditions.length === 0 ? {} : { $and: conditions });
+  }
+
+  private async violationConditions(filter: ViolationLogFilter): Promise<Filter<ViolationMessageDocument>[]> {
+    const conditions: Filter<ViolationMessageDocument>[] = [];
+    if (filter.rule !== undefined) conditions.push({ "matches.rule": filter.rule });
+    if (filter.status !== undefined) conditions.push({ status: filter.status });
+    if (filter.from !== undefined) conditions.push({ at: { $gte: filter.from } });
+    if (filter.to !== undefined) conditions.push({ at: { $lte: filter.to } });
+    const text = filter.text?.trim() ?? "";
+    if (text !== "") {
+      const $regex = searchPattern(text);
+      // The group's name is not kept with the message, so groups are searched first and matched by ID.
+      const groups = await this.groups.find({ name: { $regex } }, { projection: { _id: 1 } }).toArray();
+      conditions.push({
+        $or: [
+          { userName: { $regex } },
+          { userId: { $regex } },
+          { text: { $regex } },
+          { link: { $regex } },
+          { "matches.detail": { $regex } },
+          ...(groups.length === 0 ? [] : [{ groupId: { $in: groups.map((group) => group._id) } }]),
+        ],
+      });
+    }
+    return conditions;
   }
 
   // Violating messages per day for the last `days` days including today, oldest first, in the server's time zone.

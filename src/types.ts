@@ -99,6 +99,19 @@ export type ViolationMatch = Readonly<{ rule: ViolationRule; detail: string }>;
 // "recorded" means the bot did not try to delete the message because it has no admin rights in the group.
 export type ViolationMessageStatus = "recorded" | "deleted" | "deleteFailed";
 
+export const violationMessageStatuses: readonly ViolationMessageStatus[] = ["recorded", "deleted", "deleteFailed"];
+
+// What the violation log can be narrowed down by. Every part is optional.
+export type ViolationLogFilter = Readonly<{
+  // Found in the sender's name or ID, the message, its link, what it matched, or the group's name.
+  text?: string;
+  rule?: ViolationRule;
+  status?: ViolationMessageStatus;
+  // The period the message was sent in, both ends included.
+  from?: number;
+  to?: number;
+}>;
+
 // What a member sent when they broke a rule, kept so an admin can review deleted messages.
 export type ViolationMessage = Readonly<{
   messageId: string;

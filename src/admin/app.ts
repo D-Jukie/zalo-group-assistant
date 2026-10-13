@@ -5,7 +5,7 @@ import type { BlockedLinks } from "../moderation/blocked-links.js";
 import { parseMessageRequest, parseReminderMessageEdit, parseReminderRequest } from "../reminders/reminder.js";
 import type { ReminderBoard } from "../reminders/reminder-board.js";
 import type { Store } from "../storage/store.js";
-import { violationRules, type GroupSetting, type RateRule, type ViolationRule } from "../types.js";
+import { violationMessageStatuses, violationRules, type GroupSetting, type RateRule, type ViolationLogFilter, type ViolationRule } from "../types.js";
 import { maxSpamWindowSeconds } from "../moderation/spam-detector.js";
 import { isRecord, now } from "../utils.js";
 import { groupFilters, searchGroups, summarizeGroups, type GroupFilter } from "./group-search.js";
@@ -189,14 +189,29 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
     response.json({ series, recent });
   });
 
-  // The violation log across every group, newest first. ?before=<timestamp> continues from the previous page.
+  // The violation log across every group, newest first, narrowed down by ?q= (name, message, link,
+  // group), ?rule=, ?status= and the period ?from= to ?to= (timestamps). ?before=<timestamp> continues
+  // from the previous page; the first page also says how many entries there are in all.
   app.get("/api/violations", async (request, response) => {
-    const before = Number(request.query.before);
+    const timestamp = (value: unknown): number | undefined => {
+      const number = Number(value);
+      return typeof value === "string" && value !== "" && Number.isFinite(number) && number > 0 ? number : undefined;
+    };
+    const text = typeof request.query.q === "string" ? request.query.q.slice(0, maxSearchLength).trim() : "";
     const rule = violationRules.find((item: ViolationRule) => item === request.query.rule);
-    response.json(await store.listRecentViolationMessages(violationPageSize, {
-      ...(Number.isFinite(before) && before > 0 ? { before } : {}),
+    const status = violationMessageStatuses.find((item) => item === request.query.status);
+    const from = timestamp(request.query.from);
+    const to = timestamp(request.query.to);
+    const before = timestamp(request.query.before);
+    const filter: ViolationLogFilter = {
+      ...(text === "" ? {} : { text }),
       ...(rule === undefined ? {} : { rule }),
-    }));
+      ...(status === undefined ? {} : { status }),
+      ...(from === undefined ? {} : { from }),
+      ...(to === undefined ? {} : { to }),
+    };
+    const items = await store.listRecentViolationMessages(violationPageSize, { ...filter, ...(before === undefined ? {} : { before }) });
+    response.json(before === undefined ? { items, total: await store.countViolationMessages(filter) } : { items });
   });
 
   // One page of groups. Searching and filtering happen here, so every page of the table reflects the whole list.
