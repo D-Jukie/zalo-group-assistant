@@ -22,7 +22,6 @@ export default tseslint.config(
     },
   },
   {
-    // web/ is a separate Next.js package with its own TypeScript project.
-    ignores: ["dist/**", "node_modules/**", "coverage/**", "public/**", "web/**"],
+    ignores: ["dist/**", "node_modules/**", "coverage/**"],
   },
 );

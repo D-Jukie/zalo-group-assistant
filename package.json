@@ -3,42 +3,16 @@
   "version": "0.1.0",
   "license": "MIT",
   "private": true,
-  "type": "module",
-  "engines": {
-    "node": ">=20.0.0"
-  },
+  "description": "A Zalo group assistant: the bot in bot/, its dashboard in web/.",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
-    "build": "tsc -p tsconfig.build.json",
-    "start": "node dist/src/server.js",
-    "install:web": "npm --prefix web install",
+    "install:all": "npm --prefix bot install && npm --prefix web install",
+    "dev:bot": "npm --prefix bot run dev",
     "dev:web": "npm --prefix web run dev",
-    "build:web": "npm --prefix web run build",
-    "start:web": "npm --prefix web run start",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "eslint . --max-warnings 0",
-    "format": "prettier --write .",
-    "test": "tsx --test \"src/**/*.test.ts\"",
-    "check": "npm run typecheck && npm run build && npm test"
-  },
-  "dependencies": {
-    "dotenv": "^16.5.0",
-    "express": "^5.1.0",
-    "jpeg-js": "^0.4.4",
-    "jsqr": "^1.4.0",
-    "mongodb": "^7.7.0",
-    "pngjs": "^7.0.0",
-    "zca-js": "2.1.2"
-  },
-  "devDependencies": {
-    "@types/express": "^5.0.3",
-    "@types/jpeg-js": "^0.3.0",
-    "@types/node": "^22.15.21",
-    "@types/pngjs": "^6.0.5",
-    "eslint": "^9.27.0",
-    "prettier": "^3.5.3",
-    "tsx": "^4.19.4",
-    "typescript": "^5.8.3",
-    "typescript-eslint": "^8.32.1"
+    "build": "npm --prefix bot run build && npm --prefix web run build",
+    "start:bot": "npm --prefix bot start",
+    "start:web": "npm --prefix web start",
+    "check": "npm --prefix bot run check && npm --prefix web run typecheck",
+    "lint": "npm --prefix bot run lint",
+    "test": "npm --prefix bot test"
   }
 }
