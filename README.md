@@ -236,6 +236,26 @@ Trang `/auto-replies` (mục riêng ở sidebar) đặt sẵn những câu bot t
 - Bot chỉ xét tin nhắn chữ do thành viên gõ, không xét chú thích ảnh hay nội dung của link. Trưởng nhóm và phó nhóm nhắn cũng được trả lời.
 - Bảng ghi số lần mỗi câu đã được dùng và lần gần nhất. Có công tắc bật tắt cho từng câu, và chọn nhiều để bật, tắt hoặc xóa một lần.
 
+### Lệnh có sẵn: /random
+
+Ngoài câu trả lời do bạn soạn, bot có lệnh tự xử lý. Lệnh bật riêng cho từng nhóm (mặc định tắt) và có thể giới hạn cho trưởng nhóm và phó nhóm. Có hai chỗ chỉnh, cùng một cài đặt:
+
+- Trang `Trả lời tự động` → tab `Lệnh có sẵn`: bảng các nhóm đang bật bot, tìm theo tên hoặc ID, bật/tắt từng nhóm, hoặc tick nhiều nhóm rồi bật, tắt, đổi người được dùng một lần (tối đa 200 nhóm mỗi lần).
+- Trang của một nhóm → tab `Trả lời tự động` → thẻ `Lệnh có sẵn`.
+
+Lệnh chỉ trả lời ở nhóm đang bật bot, nên bảng ở trang `Trả lời tự động` không liệt kê nhóm đang tắt bot. Cài đặt lệnh của nhóm vẫn được giữ: bật bot lại là nhóm hiện trong bảng với cài đặt cũ.
+
+| Thành viên gõ | Bot làm gì |
+|---|---|
+| `/random` | chọn ngẫu nhiên 1 thành viên của nhóm và tag người đó |
+| `/random 3` | chọn 3 thành viên khác nhau (từ 1 đến 20) |
+| `/random 1-100` | chọn một số từ 1 đến 100, tính cả hai đầu (số âm và thứ tự ngược như `100-1` cũng được, trong khoảng ±1 tỷ) |
+
+- Bot không tự chọn chính nó. Tin trả lời ghi rõ chọn từ bao nhiêu thành viên; với nhóm lớn mà Zalo chỉ trả về một phần danh sách, tin ghi là số thành viên `bot đọc được`.
+- Kết quả dùng bộ sinh số ngẫu nhiên của hệ điều hành (`crypto.randomInt`), mọi thành viên và mọi số có cơ hội như nhau.
+- Gõ sai cú pháp thì bot trả lời cách dùng. Lệnh nghỉ 3 giây giữa hai lần trả lời trong một nhóm; ở chế độ chỉ cho quản trị viên, thành viên thường gõ lệnh sẽ không được trả lời.
+- Khi lệnh đang bật ở một nhóm, nó được ưu tiên hơn câu trả lời soạn sẵn có cùng lệnh `/random`; khi tắt, câu soạn sẵn (nếu có) vẫn trả lời như thường.
+
 ## Duyệt thành viên
 
 Với nhóm bật phê duyệt thành viên trên Zalo, bot có thể tự duyệt người xin vào. Mỗi nhóm bật riêng ở thẻ `Duyệt thành viên tự động` của tab `Tính năng` (mặc định tắt; cần bot là trưởng hoặc phó nhóm) và tự chọn tiêu chí:
