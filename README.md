@@ -20,17 +20,23 @@ QR được xử lý cục bộ, không gửi ảnh sang dịch vụ bên ngoài
 
 ## Chạy
 
-Dự án gồm hai phần: bot (thư mục gốc, cung cấp API) và dashboard Next.js (thư mục `web/`).
+Dự án gồm hai phần ngang hàng, mỗi phần là một gói npm riêng:
+
+| Thư mục | Nội dung |
+|---|---|
+| `bot/` | Bot và API quản trị (Node.js, TypeScript, Express). Mã nguồn trong `bot/src`, cấu hình trong `bot/.env` |
+| `web/` | Dashboard (Next.js) |
+
+Thư mục gốc chỉ có tài liệu, giấy phép và một `package.json` chuyển tiếp lệnh tới hai phần trên, nên mọi lệnh dưới đây đều chạy từ thư mục gốc. Cài thư viện cho cả hai phần:
 
 ```powershell
-npm install
-npm run install:web
+npm run install:all
 ```
 
 Chạy mỗi lệnh ở một cửa sổ riêng:
 
 ```powershell
-npm run dev
+npm run dev:bot
 npm run dev:web
 ```
 
@@ -38,7 +44,7 @@ Cần MongoDB đang chạy (mặc định `mongodb://127.0.0.1:27017`). Mở das
 
 Cả bot lẫn dashboard chỉ nghe ở `127.0.0.1`, tức chỉ mở được từ chính máy đang chạy. Dashboard chuyển tiếp mọi request `/api` tới bot, nên nếu cho nó nghe trên mạng thì trang đăng nhập và API của bot cũng lộ ra theo. Chỉ đổi `--hostname` trong `web/package.json` khi bạn chủ động muốn truy cập từ máy khác, và khi đó nên đặt sau HTTPS.
 
-Để chạy bản build: `npm run build` rồi `npm start` cho bot, `npm run build:web` rồi `npm run start:web` cho dashboard.
+Để chạy bản build: `npm run build` (build cả hai phần), rồi `npm run start:bot` và `npm run start:web`.
 
 ## Dashboard
 
@@ -128,13 +134,13 @@ ADMIN_ZALO_PHONE=<số điện thoại Zalo của người quản trị>
 ADMIN_EMAIL=<email của người quản trị>
 ```
 
-Tạo `ZALO_CREDENTIALS_KEY` một lần rồi đặt vào `.env`:
+Cấu hình của bot nằm trong tệp `bot/.env`, tạo theo mẫu `bot/.env.example`. Tạo `ZALO_CREDENTIALS_KEY` một lần rồi đặt vào tệp đó:
 
 ```powershell
 node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 ```
 
-Phiên Zalo của bot (cookie, IMEI) được mã hóa AES-256-GCM bằng khóa này rồi lưu trong MongoDB (collection `secrets`), nên các lần chạy sau không cần quét QR nếu phiên còn hạn. Mã QR hiện trên trang quản trị, sau bước mã PIN. Khóa chỉ nằm trong `.env`, không nằm trong MongoDB hay mã nguồn. Nếu mất hoặc đổi khóa, bot không đọc được phiên cũ và sẽ yêu cầu quét QR lại.
+Phiên Zalo của bot (cookie, IMEI) được mã hóa AES-256-GCM bằng khóa này rồi lưu trong MongoDB (collection `secrets`), nên các lần chạy sau không cần quét QR nếu phiên còn hạn. Mã QR hiện trên trang quản trị, sau bước mã PIN. Khóa chỉ nằm trong `bot/.env`, không nằm trong MongoDB hay mã nguồn. Nếu mất hoặc đổi khóa, bot không đọc được phiên cũ và sẽ yêu cầu quét QR lại.
 
 ## Thông tin bot
 
@@ -144,7 +150,7 @@ Trang `/dashboard` có thẻ thông tin bot: tên, ảnh đại diện và ID c�
 
 Bot mở API ngay khi khởi động, trước cả khi đăng nhập Zalo, để trang quản trị dẫn bạn qua ba bước:
 
-1. **Mã PIN.** Nhập email quản trị (`ADMIN_EMAIL` trong `.env`) và mã PIN. Lần đầu tiên mở trang quản trị, bước này yêu cầu đặt mã PIN (đúng 6 chữ số, nhập từng ô như mã 2FA); những lần sau thì nhập lại mã đó.
+1. **Mã PIN.** Nhập email quản trị (`ADMIN_EMAIL` trong `bot/.env`) và mã PIN. Lần đầu tiên mở trang quản trị, bước này yêu cầu đặt mã PIN (đúng 6 chữ số, nhập từng ô như mã 2FA); những lần sau thì nhập lại mã đó.
 2. **Đăng nhập Zalo cho bot.** Nếu bot chưa có phiên Zalo, trang hiện mã QR để quét bằng tài khoản sẽ chạy bot. Mã tự đổi mới khi hết hạn. Bot đã có phiên thì bước này được bỏ qua.
 3. **Mã xác thực thiết bị.** Bấm `Gửi mã đăng nhập`, bot nhắn một mã 8 chữ số tới tài khoản Zalo của người quản trị; nhập mã đó để trình duyệt đang dùng được vào bảng điều khiển. Zalo không cho một tài khoản tự nhắn cho chính nó, nên tài khoản nhận mã phải khác tài khoản bot.
 
@@ -430,7 +436,7 @@ npm run lint
 npm test
 ```
 
-`npm run check` gồm typecheck, build và test.
+`npm run check` gồm typecheck, build và test của bot, rồi typecheck của dashboard. `npm run lint` và `npm test` chạy cho bot. Các lệnh này cũng chạy được riêng trong từng thư mục `bot/` và `web/`.
 
 ## Giấy phép
 
