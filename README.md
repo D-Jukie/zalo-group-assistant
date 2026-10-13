@@ -56,6 +56,7 @@ Dashboard là ứng dụng Next.js (App Router, Tailwind CSS, SWR) trong `web/`.
 | `/reminders/new` | Tạo một nhắc hẹn cho một hoặc nhiều nhóm cùng lúc |
 | `/broadcast` | Gửi tin nhắn hàng loạt: một tin của bot cho một hoặc nhiều nhóm, gửi ngay hoặc hẹn giờ |
 | `/auto-replies` | Trả lời tự động: bot trả lời khi thành viên nhắn một từ khóa hoặc gõ một lệnh như `/huongdan` |
+| `/activity` | Lịch sử hoạt động: những việc bot tự làm và những thao tác từ trang quản trị, có tìm kiếm và bộ lọc |
 | `/setting` | Cài đặt của chính bảng điều khiển: sáng/tối, tự làm mới, số nhóm mỗi trang, kết nối tới bot, đăng xuất |
 
 Trang `/setting` không chứa cài đặt của bot. Những gì chọn ở đó chỉ lưu trên trình duyệt đang dùng.
@@ -303,6 +304,25 @@ Trang của mỗi nhóm có bảng vi phạm của nhóm đó: từng thành vi�
 Nút `Xem tin` trên từng thành viên hiện 50 tin vi phạm gần nhất của người đó: thời gian, quy tắc và nội dung phát hiện, trạng thái (`Đã xóa`, `Xóa thất bại`, hoặc `Chỉ ghi nhận` ở nhóm bot không phải QTV) và nội dung tin. Bot chỉ lưu phần chữ (tối đa 2.000 ký tự) và link của tin; ảnh và tệp không được lưu. Các tin này nằm trong collection `violation_messages`, tự xóa sau 90 ngày, và bị xóa cùng khi bạn xóa thống kê. Việc đếm vi phạm trong khoảng thời gian để kick cũng dựa trên các tin này, nên xóa thống kê của một thành viên là đặt lại số đếm của họ.
 
 Console ghi log theo dạng text có màu: `[VIOLATION]` (kèm quy tắc và nội dung phát hiện), `[VIOLATION RECORD FAILED]`, `[MESSAGE DELETED]`, `[MESSAGE DELETE FAILED]`, `[KICKED]`, `[KICK REJECTED]`, `[KICK FAILED]`, cùng `[FEATURE FAILED]` khi một tính năng gặp lỗi.
+
+## Lịch sử hoạt động
+
+Trang `Lịch sử hoạt động` ghi lại từng việc đã xảy ra, mới nhất trước: lúc nào, việc gì, ở nhóm nào, với thành viên nào, do bot tự làm hay do quản trị viên thao tác, và thành công hay thất bại (kèm lý do Zalo trả về).
+
+| Loại | Những gì được ghi |
+|---|---|
+| Kiểm duyệt | Bot xóa tin vi phạm, bot mời thành viên ra vì vi phạm đủ số lần; bạn mời ra, mời ra và chặn, bỏ chặn, xóa lịch sử vi phạm |
+| Duyệt thành viên | Bot tự duyệt người đạt tiêu chí; bạn duyệt hoặc từ chối; đổi cài đặt duyệt tự động |
+| Trả lời tự động | Mỗi lần bot trả lời một từ khóa, một lệnh hay `/random`; thêm, sửa, bật, tắt, xóa câu trả lời; đổi cài đặt `/random` |
+| Tin nhắn và nhắc hẹn | Tạo và xóa nhắc hẹn, gửi tin ngay, hẹn giờ tin, sửa và hủy tin chờ gửi; bot gửi tin khi đến giờ, hoặc bỏ qua vì bot không chạy hay nhóm đang tắt bot |
+| Cài đặt | Bật tắt bot và từng tính năng của nhóm, rời nhóm, cài đặt chống spam, quy tắc mời ra khỏi nhóm, thêm và xóa link bị chặn, từ cấm |
+| Hệ thống | Bot khởi động, kết nối và mất kết nối Zalo, gửi mã đăng nhập, đăng nhập và đăng xuất trang quản trị, đồng bộ danh sách nhóm |
+
+- Tìm theo tên hoạt động, nội dung, lý do lỗi, tên nhóm, tên hoặc ID thành viên; gõ không dấu cũng khớp chữ có dấu. Lọc theo loại, người thực hiện (bot tự làm hay quản trị viên), kết quả và khoảng ngày giờ. Mặc định là 30 ngày gần nhất; mọi bộ lọc nằm trên địa chỉ trang.
+- `Chỉ xem nhóm này` trên một dòng thu hẹp về một nhóm. Trang của mỗi nhóm có liên kết `Lịch sử hoạt động` mở sẵn lịch sử của nhóm đó.
+- Một thao tác trên nhiều nhóm hoặc nhiều thành viên được ghi thành từng dòng riêng, nên thấy được nhóm nào, người nào thất bại.
+- Tin vi phạm ở nhóm bot không có quyền quản trị chỉ được ghi nhận trong `Nhật ký vi phạm`; bot không làm gì nên không có dòng nào ở đây. Mã đăng nhập sai không được ghi.
+- Lịch sử chỉ có từ khi tính năng này chạy, nằm trong collection `activity_log` và tự xóa sau 90 ngày. Tên nhóm và tên thành viên được lưu kèm từng dòng, nên vẫn đọc được sau khi nhóm đổi tên hoặc bot rời nhóm. Ghi lịch sử không bao giờ làm chậm hay làm hỏng thao tác: nếu không ghi được, bot chỉ báo `[ACTIVITY LOG FAILED]` trên console.
 
 ## Kiểm tra mã nguồn
 
