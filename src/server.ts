@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { createAdminApp } from "./admin/app.js";
 import { LoginCodeService } from "./admin/login-code.js";
+import { JoinApprover } from "./approval/join-approver.js";
 import { SimpleBot } from "./bot/simple-bot.js";
 import { parseConfig, type Config } from "./config.js";
 import { BadWordFilterFeature } from "./features/bad-word-filter.js";
@@ -41,14 +42,17 @@ async function main(): Promise<void> {
   const reminders = new ReminderBoard(api, bot, store);
   const reminderMessenger = new ReminderMessenger(api, store);
   reminderMessenger.start();
+  const approver = new JoinApprover(api, bot, store);
+  approver.start();
   // Reminders are created, changed and answered through group events.
   api.listener.on("group_event", (event) => reminders.forget(event.threadId));
   const loginCodes = new LoginCodeService(createLoginCodeSender(bot, config));
-  const app = createAdminApp(bot, store, loginCodes, blockedLinks, bannedWords, reminders);
+  const app = createAdminApp(bot, store, loginCodes, blockedLinks, bannedWords, reminders, approver);
   const server = app.listen(config.port, config.host);
   const shutdown = (): void => {
     bot.stop();
     reminderMessenger.stop();
+    approver.stop();
     server.close();
     void store.close();
   };

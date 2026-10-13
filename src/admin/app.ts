@@ -1,4 +1,6 @@
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
+import { parseJoinApprovalSettings } from "../approval/join-approval.js";
+import type { JoinApprover } from "../approval/join-approver.js";
 import type { SimpleBot } from "../bot/simple-bot.js";
 import type { BannedWords } from "../moderation/banned-words.js";
 import type { BlockedLinks } from "../moderation/blocked-links.js";
@@ -114,7 +116,7 @@ function registerListRoutes(app: Express, store: Store, base: string, field: str
 }
 
 // The JSON API behind the dashboard in web/. It serves no pages of its own.
-export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCodeService, blockedLinks: BlockedLinks, bannedWords: BannedWords, reminders: ReminderBoard): Express {
+export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCodeService, blockedLinks: BlockedLinks, bannedWords: BannedWords, reminders: ReminderBoard, approver: JoinApprover): Express {
   const app = express();
   app.disable("x-powered-by");
   // Requests are small, except the ones that may carry pictures: a new reminder, a new scheduled
@@ -311,6 +313,53 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
       return;
     }
     response.json(await bot.getGroup(request.params.groupId) ?? updated);
+  });
+  // Who the bot lets into the group by itself. Saving goes through the waiting list at once.
+  app.patch("/api/groups/:groupId/join-approval", async (request, response) => {
+    const { groupId } = request.params;
+    const settings = parseJoinApprovalSettings(request.body);
+    if (settings === undefined) {
+      response.status(400).json({ error: "Tuổi tài khoản tối thiểu phải từ 0 đến 3650 ngày" });
+      return;
+    }
+    // Approving needs admin rights, so it cannot be turned on without them. Turning it off is always allowed.
+    if (settings.enabled && !await bot.isBotAdminIn(groupId)) {
+      response.status(409).json({ error: "Bot phải là trưởng/phó nhóm thì mới duyệt được thành viên" });
+      return;
+    }
+    const updated = await store.setJoinApproval(groupId, settings);
+    if (updated === undefined) {
+      response.status(404).json({ error: "Không tìm thấy nhóm" });
+      return;
+    }
+    if (settings.enabled) await approver.process(groupId);
+    response.json(await bot.getGroup(groupId) ?? updated);
+  });
+  // Everyone waiting to be let into the group, with the criteria each one fails.
+  app.get("/api/groups/:groupId/pending-members", async (request, response) => {
+    try {
+      response.json(await approver.listPending(request.params.groupId));
+    } catch (error: unknown) {
+      response.status(502).json({ error: `Không lấy được danh sách chờ duyệt từ Zalo: ${errorMessage(error)}` });
+    }
+  });
+  // An admin's decision on several waiting requests. The answer says what happened to each.
+  app.post("/api/groups/:groupId/pending-members/review", async (request, response) => {
+    const body: unknown = request.body;
+    const userIds = isRecord(body) ? parseIdList(body.userIds) : undefined;
+    const approve = isRecord(body) ? body.approve : undefined;
+    if (userIds === undefined || typeof approve !== "boolean") {
+      response.status(400).json({ error: `Hãy chọn từ 1 đến ${maxBulkItems} người` });
+      return;
+    }
+    try {
+      response.json({ results: await approver.review(request.params.groupId, userIds, approve) });
+    } catch (error: unknown) {
+      response.status(409).json({ error: errorMessage(error) });
+    }
+  });
+  app.get("/api/groups/:groupId/join-reviews", async (request, response) => {
+    response.json(await store.listJoinReviews(request.params.groupId));
   });
   app.patch("/api/groups/:groupId/kick-rule", async (request, response) => {
     const body: unknown = request.body;

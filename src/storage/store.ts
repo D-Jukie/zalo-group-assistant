@@ -1,6 +1,6 @@
 import { MongoClient, ObjectId, type Binary, type Collection, type Filter, type UpdateFilter } from "mongodb";
 import { GroupEventType, type GroupInfo } from "zca-js";
-import { defaultKickRules, defaultSpamSettings, violationRules, type DailyViolations, type GroupSetting, type JsonRecord, type KickRule, type KickRules, type MemberViolations, type MessageImage, type PendingReminderMessage, type RecentViolation, type ReminderMessageEdit, type ViolationLogFilter, type ReminderRepeat, type ScheduledReminderMessage, type SpamSettings, type StoredGroup, type ViolationMatch, type ViolationMessage, type ViolationMessageStatus, type ViolationRule } from "../types.js";
+import { defaultJoinApproval, defaultKickRules, defaultSpamSettings, violationRules, type JoinApprovalSettings, type JoinReview, type DailyViolations, type GroupSetting, type JsonRecord, type KickRule, type KickRules, type MemberViolations, type MessageImage, type PendingReminderMessage, type RecentViolation, type ReminderMessageEdit, type ViolationLogFilter, type ReminderRepeat, type ScheduledReminderMessage, type SpamSettings, type StoredGroup, type ViolationMatch, type ViolationMessage, type ViolationMessageStatus, type ViolationRule } from "../types.js";
 import type { EncryptedSecret } from "./secret-box.js";
 import { asNumber, asString, escapeRegExp, isRecord, now, uniqueStrings } from "../utils.js";
 import { maxMessageImagesBytes, totalImageBytes } from "../reminders/reminder.js";
@@ -18,6 +18,7 @@ type GroupDocument = {
   badWordFilterEnabled?: boolean;
   spamGuardEnabled?: boolean;
   spamSettings?: Partial<SpamSettings>;
+  joinApproval?: Partial<JoinApprovalSettings>;
   // Rules saved before kicking became a per-feature setting have no `enabled` of their own.
   kickRules?: Partial<Record<ViolationRule, Readonly<{ enabled?: boolean; count: number; windowSeconds: number }>>>;
   // The two older ways of switching kicking on, only read so groups saved by older versions keep their behaviour:
@@ -105,6 +106,14 @@ function storedImages(document: Pick<ReminderMessageDocument, "image" | "images"
 // Leaves the bytes of the pictures out of what a query returns.
 const withoutImageData = { "image.data": 0, "images.data": 0 } as const;
 
+type JoinReviewDocument = JoinReview & {
+  groupId: string;
+  // Drives the TTL index that removes old entries.
+  createdAt: Date;
+};
+
+const joinReviewRetentionDays = 90;
+
 type SettingDocument = {
   _id: string;
   values: string[];
@@ -120,6 +129,7 @@ export class Store {
     private readonly violations: Collection<ViolationDocument>,
     private readonly violationMessages: Collection<ViolationMessageDocument>,
     private readonly reminderMessages: Collection<ReminderMessageDocument>,
+    private readonly joinReviews: Collection<JoinReviewDocument>,
   ) {}
 
   public static async open(uri: string, databaseName: string): Promise<Store> {
@@ -135,6 +145,7 @@ export class Store {
       database.collection<ViolationDocument>("violations"),
       database.collection<ViolationMessageDocument>("violation_messages"),
       database.collection<ReminderMessageDocument>("reminder_messages"),
+      database.collection<JoinReviewDocument>("join_reviews"),
     );
     // MongoDB removes expired sessions on its own.
     await store.sessions.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
@@ -144,6 +155,8 @@ export class Store {
     await store.violationMessages.createIndex({ groupId: 1, userId: 1, at: -1 });
     await store.violationMessages.createIndex({ at: -1 });
     await store.violationMessages.createIndex({ createdAt: 1 }, { expireAfterSeconds: violationMessageRetentionDays * 24 * 60 * 60 });
+    await store.joinReviews.createIndex({ groupId: 1, at: -1 });
+    await store.joinReviews.createIndex({ createdAt: 1 }, { expireAfterSeconds: joinReviewRetentionDays * 24 * 60 * 60 });
     await store.reminderMessages.createIndex({ dueAt: 1 });
     await store.reminderMessages.createIndex({ groupId: 1, reminderId: 1 });
     return store;
@@ -214,6 +227,21 @@ export class Store {
         contact: { enabled: settings.contact.enabled },
       },
     });
+  }
+
+  public async setJoinApproval(groupId: string, settings: JoinApprovalSettings): Promise<StoredGroup | undefined> {
+    return this.updateGroup(groupId, { joinApproval: { enabled: settings.enabled, requireAvatar: settings.requireAvatar, minAccountAgeDays: settings.minAccountAgeDays } });
+  }
+
+  public async logJoinReview(groupId: string, review: Omit<JoinReview, "at">): Promise<void> {
+    const at = now();
+    await this.joinReviews.insertOne({ groupId, userId: review.userId, userName: review.userName, decision: review.decision, by: review.by, reasons: [...review.reasons], at, createdAt: new Date(at) });
+  }
+
+  // The latest decisions on requests to join a group, newest first.
+  public async listJoinReviews(groupId: string, limit = 50): Promise<JoinReview[]> {
+    const documents = await this.joinReviews.find({ groupId }).sort({ at: -1 }).limit(limit).toArray();
+    return documents.map((document) => ({ userId: document.userId, userName: document.userName, decision: document.decision, by: document.by, reasons: document.reasons, at: document.at }));
   }
 
   public async setKickRule(groupId: string, rule: ViolationRule, kickRule: KickRule): Promise<StoredGroup | undefined> {
@@ -592,6 +620,7 @@ export class Store {
       badWordFilterEnabled: document.badWordFilterEnabled ?? false,
       spamGuardEnabled: document.spamGuardEnabled ?? false,
       spamSettings: { ...defaultSpamSettings, ...document.spamSettings },
+      joinApproval: { ...defaultJoinApproval, ...document.joinApproval },
       kickRules: this.toKickRules(document),
       updatedAt: document.updatedAt,
     };

@@ -42,6 +42,18 @@ export const defaultSpamSettings: SpamSettings = {
   contact: { enabled: false },
 };
 
+// Who the bot lets into a group by itself, for groups where joining needs an admin's approval.
+export type JoinApprovalSettings = Readonly<{
+  enabled: boolean;
+  // The applicant must have a profile picture of their own.
+  requireAvatar: boolean;
+  // The applicant's Zalo account must be at least this old; 0 asks for no minimum.
+  minAccountAgeDays: number;
+}>;
+
+// Off until an admin turns it on. The criteria are the starting point once they do.
+export const defaultJoinApproval: JoinApprovalSettings = { enabled: false, requireAvatar: true, minAccountAgeDays: 30 };
+
 export type StoredGroup = Readonly<{
   groupId: string;
   name: string;
@@ -54,6 +66,7 @@ export type StoredGroup = Readonly<{
   badWordFilterEnabled: boolean;
   spamGuardEnabled: boolean;
   spamSettings: SpamSettings;
+  joinApproval: JoinApprovalSettings;
   kickRules: KickRules;
   updatedAt: number;
 }>;
@@ -69,6 +82,7 @@ export type AdminGroupView = Readonly<{
   badWordFilterEnabled: boolean;
   spamGuardEnabled: boolean;
   spamSettings: SpamSettings;
+  joinApproval: JoinApprovalSettings;
   kickRules: KickRules;
   // Without admin rights the bot cannot delete or kick, so it only records violations.
   botIsAdmin: boolean;
@@ -165,6 +179,40 @@ export type MemberRemoval = Readonly<{ userId: string; ok: boolean; error?: stri
 
 // Someone a group has blocked from joining again.
 export type BlockedMember = Readonly<{ userId: string; name: string; avatar: string }>;
+
+// Someone waiting to be let into a group.
+export type JoinApplicant = Readonly<{
+  userId: string;
+  name: string;
+  avatar: string;
+  // When the Zalo account was created; null when Zalo does not say.
+  accountCreatedAt: number | null;
+}>;
+
+// The waiting list of a group. `reasons` are the criteria an applicant fails; empty when they meet them all.
+export type PendingJoinList = Readonly<{
+  items: readonly (JoinApplicant & Readonly<{ reasons: readonly string[] }>)[];
+  memberCount: number;
+  maxMembers: number;
+  // How many more members the group can take.
+  freeSlots: number;
+  // Whether the group asks an admin's approval for new members at all.
+  approvalRequired: boolean;
+  botIsAdmin: boolean;
+}>;
+
+// A request to join that was decided, kept so the bot's decisions can be checked.
+export type JoinReview = Readonly<{
+  userId: string;
+  userName: string;
+  decision: "approved" | "rejected";
+  // By the bot's criteria, or by an admin in the dashboard.
+  by: "auto" | "manual";
+  reasons: readonly string[];
+  at: number;
+}>;
+
+export type JoinReviewResult = Readonly<{ userId: string; name: string; ok: boolean; error?: string }>;
 
 export const reminderRepeats = ["none", "daily", "weekly", "monthly"] as const;
 
