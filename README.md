@@ -49,7 +49,7 @@ Dashboard là ứng dụng Next.js (App Router, Tailwind CSS, SWR) trong `web/`.
 | `/login` | Đăng nhập bằng mã gửi qua Zalo |
 | `/dashboard` | Thông tin bot, các con số tổng quan, biểu đồ vi phạm 14 ngày, 20 tin vi phạm gần nhất |
 | `/groups` | Danh sách nhóm, có công tắc bật tắt bot cho từng nhóm, tìm kiếm, bộ lọc và phân trang (lưu trên URL). Bot thực hiện việc tìm, lọc và chia trang; ô tìm chờ 250ms sau khi ngừng gõ rồi mới gửi yêu cầu, và tìm được theo tên không dấu, hoặc theo ID nhóm khi gõ từ 6 chữ số trở lên |
-| `/group/<id>` | Công tắc bật bot và các con số của nhóm ở đầu trang, rồi ba tab: `Tính năng` (từng tính năng kèm danh sách riêng và cài đặt kick của nó), `Thành viên`, `Vi phạm` (thống kê theo thành viên và tin vi phạm đã lưu) |
+| `/group/<id>` | Công tắc bật bot và các con số của nhóm ở đầu trang, rồi bốn tab: `Tính năng` (từng tính năng kèm danh sách riêng và cài đặt kick của nó, và duyệt thành viên tự động), `Thành viên`, `Chờ duyệt`, `Vi phạm` (thống kê theo thành viên và tin vi phạm đã lưu) |
 | `/features` | Cài đặt dùng chung của từng tính năng (Chặn link, Lọc từ cấm, Chống spam): danh sách link và từ cấm chung, ô thử một câu, mô tả chống spam |
 | `/violations` | Nhật ký vi phạm trên mọi nhóm: tìm theo tên thành viên, nội dung tin, link hoặc tên nhóm; lọc theo quy tắc, kết quả xử lý và khoảng ngày giờ; tải thêm tin cũ hơn |
 | `/reminders` | Lịch nhắc hẹn của Zalo ở mọi nhóm đang bật bot: nội dung, giờ bắt đầu, số người tham gia và từ chối, danh sách thành viên đã trả lời |
@@ -214,6 +214,21 @@ Bot dùng tính năng `Nhắc hẹn` có sẵn của Zalo, nên thành viên th�
 - **Xóa:** nút `Xóa` gỡ nhắc hẹn khỏi nhóm trên Zalo.
 
 Chỉ nhóm đang bật bot mới được đọc và chọn. Bot nhớ tạm bảng nhắc hẹn của mỗi nhóm trong 5 phút và đọc lại ngay khi nhóm đó có thay đổi; nút `Làm mới` đọc lại mọi nhóm. Nhóm tắt quyền tạo nhắc hẹn của thành viên sẽ báo lỗi nếu bot không phải trưởng/phó nhóm. Nhắc hẹn của Zalo chỉ có giờ bắt đầu, không có giờ kết thúc.
+
+## Duyệt thành viên
+
+Với nhóm bật phê duyệt thành viên trên Zalo, bot có thể tự duyệt người xin vào. Mỗi nhóm bật riêng ở thẻ `Duyệt thành viên tự động` của tab `Tính năng` (mặc định tắt; cần bot là trưởng hoặc phó nhóm) và tự chọn tiêu chí:
+
+| Tiêu chí | Đạt khi | Mặc định |
+|---|---|---|
+| Có ảnh đại diện | tài khoản không dùng ảnh mặc định của Zalo | bật |
+| Tham gia Zalo ít nhất | tài khoản Zalo đã được tạo đủ số ngày, tháng (30 ngày) hoặc năm (365 ngày) đã đặt | bật, 1 tháng |
+
+- Người đạt mọi tiêu chí đang bật được duyệt ngay. Người không đạt **không bị từ chối**: họ nằm lại trong danh sách chờ để bạn tự quyết định. Tài khoản mà Zalo không cho biết ngày tạo thì không đạt tiêu chí tuổi.
+- Một nhóm chứa tối đa 1000 thành viên (bot đọc giới hạn thật từ Zalo). Bot chỉ duyệt trong số chỗ còn trống, theo thứ tự xin vào, và ngừng duyệt khi nhóm đầy; duyệt tay cũng dừng ở đúng số chỗ còn lại.
+- Bot xử lý khi có người xin vào, khi bạn lưu cài đặt, lúc khởi động và mỗi 5 phút, nên yêu cầu gửi tới lúc bot tắt vẫn được xét khi bot chạy lại.
+- Tab `Chờ duyệt` liệt kê người đang chờ: ảnh, tên, ID, ngày tham gia Zalo và từng tiêu chí họ chưa đạt. Tick một hoặc nhiều người rồi `Duyệt` hoặc `Từ chối` (từ chối có hỏi lại). Danh sách này dùng được cả khi tắt duyệt tự động.
+- `Lịch sử duyệt` ở cuối tab ghi 50 quyết định gần nhất, của bot lẫn của bạn, lưu 90 ngày (collection `join_reviews`).
 
 ## Bật bot theo nhóm
 
