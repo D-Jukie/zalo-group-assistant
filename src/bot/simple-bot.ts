@@ -1,7 +1,7 @@
 import { ThreadType, type API, type GroupEvent, type Message } from "zca-js";
 import { writeLog } from "../logger.js";
 import type { Store } from "../storage/store.js";
-import type { AdminGroupView, BotStatus, LiveGroupInfo, MemberProfile, StoredGroup } from "../types.js";
+import type { AdminGroupView, BlockedMember, BotStatus, LiveGroupInfo, MemberProfile, MemberRemoval, StoredGroup } from "../types.js";
 import { isRecord, now } from "../utils.js";
 import { Enforcer } from "./enforcer.js";
 import type { BotFeature } from "./feature.js";
@@ -16,6 +16,9 @@ const groupInfoBatchSize = 50;
 const memberTtlMs = 5 * 60 * 1000;
 // Zalo returns the profiles of several accounts in one request; this many at a time.
 const profileBatchSize = 100;
+// Zalo lists a group's blocked accounts a page at a time.
+const blockedPageSize = 50;
+const maxBlockedPages = 20;
 
 export class SimpleBot {
   private readonly groupCache = new Map<string, Readonly<{ info: LiveGroupInfo; expiresAt: number }>>();
@@ -116,6 +119,59 @@ export class SimpleBot {
     const result = { members, complete: memberIds.length >= info.totalMember, expiresAt: now() + memberTtlMs };
     this.memberCache.set(groupId, result);
     return result;
+  }
+
+  // Removes members from a group and, with `block`, stops them from joining it again. The account
+  // needs admin rights; it cannot remove itself or the owner, and only the owner can remove a deputy.
+  // Members that may not be removed are answered with the reason and the rest still go.
+  public async removeMembers(groupId: string, userIds: readonly string[], block: boolean): Promise<MemberRemoval[]> {
+    const info = await this.syncGroup(groupId);
+    if (!this.isBotAdmin(info)) throw new Error("Bot phải là trưởng hoặc phó nhóm thì mới xóa được thành viên khỏi nhóm");
+    const botIsOwner = info.creatorId === this.ownId;
+    const refusal = (userId: string): string | undefined => {
+      if (userId === this.ownId) return "Bot không tự xóa chính mình; dùng “Rời nhóm” ở trang Nhóm";
+      if (userId === info.creatorId) return "Không xóa được trưởng nhóm";
+      if (!botIsOwner && info.adminIds.includes(userId)) return "Chỉ trưởng nhóm mới xóa được phó nhóm";
+      return undefined;
+    };
+    const allowed = userIds.filter((userId) => refusal(userId) === undefined);
+    const rejected = new Set<string>();
+    let warning: string | undefined;
+    if (allowed.length > 0) {
+      for (const userId of (await this.api.removeUserFromGroup(allowed, groupId)).errorMembers) rejected.add(userId);
+      const removed = allowed.filter((userId) => !rejected.has(userId));
+      if (block && removed.length > 0) {
+        try {
+          await this.api.addGroupBlockedMember(removed, groupId);
+        } catch (error: unknown) {
+          warning = `Đã xóa khỏi nhóm nhưng chưa chặn được: ${error instanceof Error ? error.message : String(error)}`;
+        }
+      }
+      this.groupCache.delete(groupId);
+      this.memberCache.delete(groupId);
+    }
+    return userIds.map((userId): MemberRemoval => {
+      const reason = refusal(userId) ?? (rejected.has(userId) ? "Zalo từ chối xóa thành viên này" : undefined);
+      if (reason !== undefined) return { userId, ok: false, error: reason };
+      return { userId, ok: true, ...(warning === undefined ? {} : { warning }) };
+    });
+  }
+
+  // Everyone the group has blocked from joining again.
+  public async listBlockedMembers(groupId: string): Promise<BlockedMember[]> {
+    const blocked: BlockedMember[] = [];
+    for (let page = 1; page <= maxBlockedPages; page += 1) {
+      const response = await this.api.getGroupBlockedMember({ page, count: blockedPageSize }, groupId);
+      const members: readonly Readonly<{ id: string; dName: string; zaloName: string; avatar: string }>[] = Array.isArray(response.blocked_members) ? response.blocked_members : [];
+      for (const member of members) blocked.push({ userId: member.id, name: member.dName || member.zaloName, avatar: member.avatar });
+      if (response.has_more !== 1 || members.length === 0) break;
+    }
+    return blocked;
+  }
+
+  // Lets blocked accounts join the group again.
+  public async unblockMembers(groupId: string, userIds: readonly string[]): Promise<void> {
+    await this.api.removeGroupBlockedMember([...userIds], groupId);
   }
 
   // Takes the account out of a group. The group's owner cannot simply walk away: ownership has to be

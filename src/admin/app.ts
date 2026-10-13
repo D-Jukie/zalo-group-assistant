@@ -32,6 +32,7 @@ const maxSearchLength = 100;
 // How many rows one bulk action may cover.
 const maxBulkItems = 200;
 const groupBulkActions = ["enable", "disable", "leave"] as const;
+const memberBulkActions = ["kick", "block", "clear"] as const;
 
 // A list of distinct, non-empty strings no longer than a bulk action allows; undefined for anything else.
 function parseIdList(value: unknown): string[] | undefined {
@@ -365,6 +366,51 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
       response.json({ ...found, memberCount: rows.length, complete });
     } catch (error: unknown) {
       response.status(502).json({ error: `Không lấy được danh sách thành viên từ Zalo: ${errorMessage(error)}` });
+    }
+  });
+  // One action for several members of a group: remove them ("kick"), remove them and stop them from
+  // joining again ("block"), or clear their record of violations ("clear"). The answer says what
+  // happened to each member.
+  app.post("/api/groups/:groupId/members/bulk", async (request, response) => {
+    const { groupId } = request.params;
+    const body: unknown = request.body;
+    const action = isRecord(body) ? memberBulkActions.find((item) => item === body.action) : undefined;
+    const userIds = isRecord(body) ? parseIdList(body.userIds) : undefined;
+    if (action === undefined || userIds === undefined) {
+      response.status(400).json({ error: `Hãy chọn từ 1 đến ${maxBulkItems} thành viên` });
+      return;
+    }
+    try {
+      if (action === "clear") {
+        await store.clearViolations(groupId, userIds);
+        response.json({ results: userIds.map((userId) => ({ userId, ok: true })) });
+        return;
+      }
+      response.json({ results: await bot.removeMembers(groupId, userIds, action === "block") });
+    } catch (error: unknown) {
+      response.status(409).json({ error: errorMessage(error) });
+    }
+  });
+  app.get("/api/groups/:groupId/blocked-members", async (request, response) => {
+    try {
+      response.json(await bot.listBlockedMembers(request.params.groupId));
+    } catch (error: unknown) {
+      response.status(502).json({ error: `Không lấy được danh sách bị chặn từ Zalo: ${errorMessage(error)}` });
+    }
+  });
+  // Lets blocked accounts join the group again.
+  app.post("/api/groups/:groupId/blocked-members/remove", async (request, response) => {
+    const body: unknown = request.body;
+    const userIds = isRecord(body) ? parseIdList(body.userIds) : undefined;
+    if (userIds === undefined) {
+      response.status(400).json({ error: `Hãy chọn từ 1 đến ${maxBulkItems} tài khoản` });
+      return;
+    }
+    try {
+      await bot.unblockMembers(request.params.groupId, userIds);
+      response.json(await bot.listBlockedMembers(request.params.groupId));
+    } catch (error: unknown) {
+      response.status(502).json({ error: `Zalo không cho bỏ chặn: ${errorMessage(error)}` });
     }
   });
   app.get("/api/groups/:groupId/violations", async (request, response) => {

@@ -159,6 +159,13 @@ export type GroupMember = MemberProfile & Readonly<{
   kicks: number;
 }>;
 
+// What removing one member from a group came to. `warning` is set when they were removed but could
+// not be blocked from coming back.
+export type MemberRemoval = Readonly<{ userId: string; ok: boolean; error?: string; warning?: string }>;
+
+// Someone a group has blocked from joining again.
+export type BlockedMember = Readonly<{ userId: string; name: string; avatar: string }>;
+
 export const reminderRepeats = ["none", "daily", "weekly", "monthly"] as const;
 
 export type ReminderRepeat = (typeof reminderRepeats)[number];
