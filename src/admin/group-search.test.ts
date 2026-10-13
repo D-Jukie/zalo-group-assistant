@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { defaultJoinApproval, defaultKickRules, defaultSpamSettings, type AdminGroupView } from "../types.js";
+import { defaultGroupCommands, defaultJoinApproval, defaultKickRules, defaultSpamSettings, type AdminGroupView } from "../types.js";
 import { searchGroups, summarizeGroups, type GroupQuery } from "./group-search.js";
 
 function group(groupId: string, name: string, overrides: Partial<AdminGroupView> = {}): AdminGroupView {
@@ -16,6 +16,7 @@ function group(groupId: string, name: string, overrides: Partial<AdminGroupView>
     spamGuardEnabled: false,
     spamSettings: defaultSpamSettings,
     joinApproval: defaultJoinApproval,
+    commands: defaultGroupCommands,
     kickRules: defaultKickRules,
     botIsAdmin: false,
     updatedAt: 0,

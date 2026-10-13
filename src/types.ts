@@ -54,6 +54,15 @@ export type JoinApprovalSettings = Readonly<{
 // Off until an admin turns it on. The criteria are the starting point once they do.
 export const defaultJoinApproval: JoinApprovalSettings = { enabled: false, requireAvatar: true, minAccountAgeDays: 30 };
 
+// The commands the bot knows by itself (as opposed to the answers an admin writes), switched per group.
+export type GroupCommandSettings = Readonly<{
+  // "/random": picks members of the group or a number in a range.
+  random: Readonly<{ enabled: boolean; adminOnly: boolean }>;
+}>;
+
+// Off until an admin turns them on.
+export const defaultGroupCommands: GroupCommandSettings = { random: { enabled: false, adminOnly: false } };
+
 export type StoredGroup = Readonly<{
   groupId: string;
   name: string;
@@ -67,6 +76,7 @@ export type StoredGroup = Readonly<{
   spamGuardEnabled: boolean;
   spamSettings: SpamSettings;
   joinApproval: JoinApprovalSettings;
+  commands: GroupCommandSettings;
   kickRules: KickRules;
   updatedAt: number;
 }>;
@@ -83,6 +93,7 @@ export type AdminGroupView = Readonly<{
   spamGuardEnabled: boolean;
   spamSettings: SpamSettings;
   joinApproval: JoinApprovalSettings;
+  commands: GroupCommandSettings;
   kickRules: KickRules;
   // Without admin rights the bot cannot delete or kick, so it only records violations.
   botIsAdmin: boolean;

@@ -253,6 +253,7 @@ export class SimpleBot {
       spamGuardEnabled: group.spamGuardEnabled,
       spamSettings: group.spamSettings,
       joinApproval: group.joinApproval,
+      commands: group.commands,
       kickRules: group.kickRules,
       botIsAdmin,
       updatedAt: group.updatedAt,

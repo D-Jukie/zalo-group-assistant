@@ -1,6 +1,6 @@
 import { MongoClient, ObjectId, type Binary, type Collection, type Filter, type UpdateFilter } from "mongodb";
 import { GroupEventType, type GroupInfo } from "zca-js";
-import { defaultJoinApproval, defaultKickRules, defaultSpamSettings, violationRules, type AutoReplyDraft, type AutoReplyKind, type AutoReplyMatch, type AutoReplyRule, type JoinApprovalSettings, type JoinReview, type DailyViolations, type GroupSetting, type JsonRecord, type KickRule, type KickRules, type MemberViolations, type MessageImage, type PendingReminderMessage, type RecentViolation, type ReminderMessageEdit, type ViolationLogFilter, type ReminderRepeat, type ScheduledReminderMessage, type SpamSettings, type StoredGroup, type ViolationMatch, type ViolationMessage, type ViolationMessageStatus, type ViolationRule } from "../types.js";
+import { defaultGroupCommands, defaultJoinApproval, defaultKickRules, defaultSpamSettings, violationRules, type AutoReplyDraft, type AutoReplyKind, type GroupCommandSettings, type AutoReplyMatch, type AutoReplyRule, type JoinApprovalSettings, type JoinReview, type DailyViolations, type GroupSetting, type JsonRecord, type KickRule, type KickRules, type MemberViolations, type MessageImage, type PendingReminderMessage, type RecentViolation, type ReminderMessageEdit, type ViolationLogFilter, type ReminderRepeat, type ScheduledReminderMessage, type SpamSettings, type StoredGroup, type ViolationMatch, type ViolationMessage, type ViolationMessageStatus, type ViolationRule } from "../types.js";
 import type { EncryptedSecret } from "./secret-box.js";
 import { asNumber, asString, escapeRegExp, isRecord, now, uniqueStrings } from "../utils.js";
 import { maxMessageImagesBytes, totalImageBytes } from "../reminders/reminder.js";
@@ -19,6 +19,7 @@ type GroupDocument = {
   spamGuardEnabled?: boolean;
   spamSettings?: Partial<SpamSettings>;
   joinApproval?: Partial<JoinApprovalSettings>;
+  commands?: Partial<{ random: Partial<GroupCommandSettings["random"]> }>;
   // Rules saved before kicking became a per-feature setting have no `enabled` of their own.
   kickRules?: Partial<Record<ViolationRule, Readonly<{ enabled?: boolean; count: number; windowSeconds: number }>>>;
   // The two older ways of switching kicking on, only read so groups saved by older versions keep their behaviour:
@@ -246,6 +247,10 @@ export class Store {
         contact: { enabled: settings.contact.enabled },
       },
     });
+  }
+
+  public async setGroupCommands(groupId: string, commands: GroupCommandSettings): Promise<StoredGroup | undefined> {
+    return this.updateGroup(groupId, { commands: { random: { enabled: commands.random.enabled, adminOnly: commands.random.adminOnly } } });
   }
 
   public async setJoinApproval(groupId: string, settings: JoinApprovalSettings): Promise<StoredGroup | undefined> {
@@ -713,6 +718,7 @@ export class Store {
       spamGuardEnabled: document.spamGuardEnabled ?? false,
       spamSettings: { ...defaultSpamSettings, ...document.spamSettings },
       joinApproval: { ...defaultJoinApproval, ...document.joinApproval },
+      commands: { random: { ...defaultGroupCommands.random, ...document.commands?.random } },
       kickRules: this.toKickRules(document),
       updatedAt: document.updatedAt,
     };

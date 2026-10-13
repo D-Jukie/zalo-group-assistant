@@ -40,7 +40,10 @@ async function main(): Promise<void> {
   const bannedWords = await BannedWords.load(store);
   const autoReplies = await AutoReplies.load(store);
   const api = await login(store, config.credentialsKey);
-  const bot = new SimpleBot(api, store, api.getOwnId(), [new LinkGuardFeature(blockedLinks), new BadWordFilterFeature(bannedWords), new SpamGuardFeature(), new AutoReplyFeature(api, autoReplies)]);
+  const ownId = api.getOwnId();
+  // "/random" picks from the group's members, which the bot reads; the bot itself is made just below.
+  const members = { ownId, listMembers: (groupId: string) => bot.listMembers(groupId) };
+  const bot: SimpleBot = new SimpleBot(api, store, ownId, [new LinkGuardFeature(blockedLinks), new BadWordFilterFeature(bannedWords), new SpamGuardFeature(), new AutoReplyFeature(api, autoReplies, members)]);
   await bot.start();
   const reminders = new ReminderBoard(api, bot, store);
   const reminderMessenger = new ReminderMessenger(api, store);

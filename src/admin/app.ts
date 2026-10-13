@@ -316,6 +316,56 @@ export function createAdminApp(bot: SimpleBot, store: Store, loginCodes: LoginCo
     }
     response.json(await bot.getGroup(request.params.groupId) ?? updated);
   });
+  // The bot's own commands across the groups the bot is on in, for the page that sets them up in one place.
+  // A command cannot answer where the bot is off, so those groups are left out.
+  const groupCommandRows = async () => (await bot.listGroups()).filter((group) => group.botEnabled).map((group) => ({ groupId: group.groupId, name: group.name, memberCount: group.memberCount, commands: group.commands }));
+  app.get("/api/group-commands", async (_request, response) => {
+    try {
+      response.json(await groupCommandRows());
+    } catch (error: unknown) {
+      response.status(502).json({ error: `Không lấy được danh sách nhóm từ Zalo: ${errorMessage(error)}` });
+    }
+  });
+  // Changes "/random" in several groups at once. Only the given fields change; the rest of each group's setting stays.
+  app.post("/api/group-commands", async (request, response) => {
+    const body: unknown = request.body;
+    const groupIds = isRecord(body) ? parseIdList(body.groupIds) : undefined;
+    const random = isRecord(body) && isRecord(body.random) ? body.random : undefined;
+    const enabled = random?.enabled;
+    const adminOnly = random?.adminOnly;
+    const valid = (value: unknown): value is boolean | undefined => value === undefined || typeof value === "boolean";
+    if (groupIds === undefined || random === undefined || !valid(enabled) || !valid(adminOnly) || (enabled === undefined && adminOnly === undefined)) {
+      response.status(400).json({ error: `Hãy chọn từ 1 đến ${maxBulkItems} nhóm và cài đặt cần đổi` });
+      return;
+    }
+    try {
+      const current = new Map((await bot.listGroups()).map((group) => [group.groupId, group.commands]));
+      for (const groupId of groupIds) {
+        const commands = current.get(groupId);
+        // A group the account has left is skipped.
+        if (commands === undefined) continue;
+        await store.setGroupCommands(groupId, { random: { enabled: enabled ?? commands.random.enabled, adminOnly: adminOnly ?? commands.random.adminOnly } });
+      }
+      response.json(await groupCommandRows());
+    } catch (error: unknown) {
+      response.status(502).json({ error: `Không lấy được danh sách nhóm từ Zalo: ${errorMessage(error)}` });
+    }
+  });
+  // Which of the bot's own commands work in the group, and for whom.
+  app.patch("/api/groups/:groupId/commands", async (request, response) => {
+    const body: unknown = request.body;
+    const random = isRecord(body) && isRecord(body.random) ? body.random : undefined;
+    if (random === undefined || typeof random.enabled !== "boolean" || typeof random.adminOnly !== "boolean") {
+      response.status(400).json({ error: "Cài đặt lệnh không hợp lệ" });
+      return;
+    }
+    const updated = await store.setGroupCommands(request.params.groupId, { random: { enabled: random.enabled, adminOnly: random.adminOnly } });
+    if (updated === undefined) {
+      response.status(404).json({ error: "Không tìm thấy nhóm" });
+      return;
+    }
+    response.json(await bot.getGroup(request.params.groupId) ?? updated);
+  });
   // Who the bot lets into the group by itself. Saving goes through the waiting list at once.
   app.patch("/api/groups/:groupId/join-approval", async (request, response) => {
     const { groupId } = request.params;
