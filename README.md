@@ -431,3 +431,9 @@ npm test
 ```
 
 `npm run check` gồm typecheck, build và test.
+
+## Giấy phép
+
+Dự án phát hành theo [giấy phép MIT](LICENSE): bạn được dùng, sửa và phân phối lại mã nguồn, miễn là giữ thông báo bản quyền và nội dung giấy phép.
+
+Các thư viện mà dự án sử dụng giữ giấy phép riêng của chúng (MIT, Apache 2.0, BSD, ISC). `zca-js` là thư viện không chính thức, không thuộc Zalo.
