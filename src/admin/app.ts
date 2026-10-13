@@ -13,6 +13,7 @@ import { parseMessageRequest, parseReminderMessageEdit, parseReminderRequest } f
 import { parsePollRequest } from "../polls/poll.js";
 import type { PollBoard } from "../polls/poll-board.js";
 import type { ReminderBoard } from "../reminders/reminder-board.js";
+import { parseWelcomeSettings } from "../welcome/welcome.js";
 import type { Store } from "../storage/store.js";
 import { violationMessageStatuses, violationRuleNames, violationRules, type ActivityCategory, type NewActivity, type GroupMember, type GroupSetting, type RateRule, type ViolationLogFilter, type ViolationRule, type ReminderCreateResult } from "../types.js";
 import { maxSpamWindowSeconds } from "../moderation/spam-detector.js";
@@ -373,6 +374,21 @@ export function createAdminApp(bot: SimpleBot, store: Store, blockedLinks: Block
     } catch (error: unknown) {
       response.status(502).json({ error: `Không lấy được danh sách nhóm từ Zalo: ${errorMessage(error)}` });
     }
+  });
+  // What the bot says to people who join the group, and whether it says it.
+  app.patch("/api/groups/:groupId/welcome", async (request, response) => {
+    const settings = parseWelcomeSettings(request.body);
+    if (typeof settings === "string") {
+      response.status(400).json({ error: settings });
+      return;
+    }
+    const updated = await store.setGroupWelcome(request.params.groupId, settings);
+    if (updated === undefined) {
+      response.status(404).json({ error: "Không tìm thấy nhóm" });
+      return;
+    }
+    logAdmin("messages", "Đổi cài đặt chào thành viên mới", { groupId: request.params.groupId, detail: [settings.enabled ? "Bật" : "Tắt", previewText(settings.text)].filter((part) => part !== "").join(": ") });
+    response.json(await bot.getGroup(request.params.groupId) ?? updated);
   });
   // Which of the bot's own commands work in the group, and for whom.
   app.patch("/api/groups/:groupId/commands", async (request, response) => {

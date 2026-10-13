@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ThreadType, type Message } from "zca-js";
 import type { NewActivity } from "../types.js";
-import { defaultKickRules, defaultGroupCommands, defaultJoinApproval, defaultSpamSettings, type KickRules, type StoredGroup } from "../types.js";
+import { defaultKickRules, defaultGroupCommands, defaultGroupWelcome, defaultJoinApproval, defaultSpamSettings, type KickRules, type StoredGroup } from "../types.js";
 import { Enforcer, type EnforcerApi, type EnforcerStore } from "./enforcer.js";
 
 type Scenario = Readonly<{
@@ -64,6 +64,7 @@ function setup(scenario: Scenario = {}) {
     spamSettings: defaultSpamSettings,
     joinApproval: defaultJoinApproval,
     commands: defaultGroupCommands,
+    welcome: defaultGroupWelcome,
     kickRules: scenario.kickRules ?? defaultKickRules,
     updatedAt: 0,
   };

@@ -18,6 +18,7 @@ import { PollBoard } from "./polls/poll-board.js";
 import { ReminderBoard } from "./reminders/reminder-board.js";
 import { ReminderMessenger } from "./reminders/reminder-messenger.js";
 import { Store } from "./storage/store.js";
+import { Welcomer } from "./welcome/welcomer.js";
 import { ZaloLogin } from "./zalo/auth.js";
 
 // Zalo rejects messages from an account to itself, so the code goes to the owner's own Zalo account.
@@ -75,6 +76,8 @@ async function main(): Promise<void> {
   reminderMessenger.start();
   const approver = new JoinApprover(api, bot, store, activity);
   approver.start();
+  const welcomer = new Welcomer(api, store, ownId, activity);
+  welcomer.start();
   // Reminders are created, changed and answered through group events.
   api.listener.on("group_event", (event) => reminders.forget(event.threadId));
   const loginCodes = new LoginCodeService(createLoginCodeSender(bot, config));
@@ -82,6 +85,7 @@ async function main(): Promise<void> {
     bot.stop();
     reminderMessenger.stop();
     approver.stop();
+    welcomer.stop();
   };
   gate.open(createAdminApp(bot, store, blockedLinks, bannedWords, reminders, approver, autoReplies, new PollBoard(api, bot), activity), loginCodes);
 }
