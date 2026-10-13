@@ -19,6 +19,21 @@ export type SpamSettings = { flood: RateRule; repeat: RateRule; contact: { enabl
 // Kicking belongs to a feature: each rule has its own switch, count and time window.
 export type KickRule = RateRule;
 
+// Who the bot lets into a group by itself: the applicant must have a picture of their own and an
+// account at least this old (0 asks for no minimum).
+export type JoinApprovalSettings = { enabled: boolean; requireAvatar: boolean; minAccountAgeDays: number };
+
+// Someone waiting to be let into a group. `reasons` are the criteria they fail; empty when they meet them all.
+export type PendingJoinMember = { userId: string; name: string; avatar: string; accountCreatedAt: number | null; reasons: string[] };
+
+// The waiting list of a group, with how much room the group has left.
+export type PendingJoinList = { items: PendingJoinMember[]; memberCount: number; maxMembers: number; freeSlots: number; approvalRequired: boolean; botIsAdmin: boolean };
+
+// A request to join that was decided, by the bot's criteria ("auto") or by an admin ("manual").
+export type JoinReview = { userId: string; userName: string; decision: "approved" | "rejected"; by: "auto" | "manual"; reasons: string[]; at: number };
+
+export type JoinReviewResult = { userId: string; name: string; ok: boolean; error?: string };
+
 export type Group = {
   groupId: string;
   name: string;
@@ -31,6 +46,7 @@ export type Group = {
   badWordFilterEnabled: boolean;
   spamGuardEnabled: boolean;
   spamSettings: SpamSettings;
+  joinApproval: JoinApprovalSettings;
   kickRules: Record<ViolationRule, KickRule>;
   botIsAdmin: boolean;
   updatedAt: number;

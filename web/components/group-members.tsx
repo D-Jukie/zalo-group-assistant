@@ -44,7 +44,7 @@ function selectable(member: GroupMember): boolean {
 }
 
 // The picture of a member, or their initial when they have none or it fails to load.
-function Avatar({ member }: { member: Pick<GroupMember, "name" | "avatar"> }) {
+export function Avatar({ member }: { member: Pick<GroupMember, "name" | "avatar"> }) {
   const [failed, setFailed] = useState(false);
   if (member.avatar === "" || failed) {
     return <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-full bg-surface-hover text-sm font-medium text-muted">{(member.name || "?").trim().charAt(0).toUpperCase()}</span>;

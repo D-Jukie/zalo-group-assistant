@@ -7,8 +7,9 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import useSWR, { useSWRConfig } from "swr";
 import { ApiError, errorText, send } from "@/lib/api";
 import { cn, formatDateTime, formatNumber, splitWindow, windowUnits } from "@/lib/format";
-import { ruleLabels, totalViolations, violationRules, type Group, type GroupToggle, type KickRule, type MemberViolations, type RateRule, type SpamSettings, type ViolationMessage, type ViolationRule } from "@/lib/types";
+import { ruleLabels, totalViolations, violationRules, type Group, type GroupToggle, type KickRule, type MemberViolations, type RateRule, type SpamSettings, type PendingJoinList, type ViolationMessage, type ViolationRule } from "@/lib/types";
 import { ConfirmDialog } from "./confirm-dialog";
+import { JoinApprovalCard, PendingMembers } from "./group-approvals";
 import { GroupMembers } from "./group-members";
 import { ListManager } from "./list-manager";
 import { RowCheckbox, RowNumber, SelectAllCheckbox, SelectionBar, useSelection } from "./selection";
@@ -289,6 +290,8 @@ function FeatureCards({ group, onChange }: { group: Group; onChange: (group: Gro
           <SpamSettingsForm key={JSON.stringify(group.spamSettings)} group={group} onSaved={onChange} />
         </div>
       </FeatureCard>
+      {/* Saved criteria remount the card so its fields show the stored values again. */}
+      <JoinApprovalCard key={JSON.stringify(group.joinApproval)} group={group} onChange={onChange} />
     </div>
   );
 }
@@ -472,6 +475,7 @@ export function GroupView({ groupId }: { groupId: string }) {
 const tabs = [
   { value: "features", label: "Tính năng" },
   { value: "members", label: "Thành viên" },
+  { value: "pending", label: "Chờ duyệt" },
   { value: "violations", label: "Vi phạm" },
 ] as const;
 
@@ -485,6 +489,8 @@ function GroupPage({ group, backLink, onChange }: { group: Group; backLink: Reac
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { data: records } = useSWR<MemberViolations[]>(`/groups/${encodeURIComponent(group.groupId)}/violations`);
+  // Only an admin account can read the waiting list.
+  const { data: waiting } = useSWR<PendingJoinList>(group.botIsAdmin ? `/groups/${encodeURIComponent(group.groupId)}/pending-members` : null);
   // A link to a member's messages opens the violations tab, whether or not it names the tab.
   const tab: Tab = tabs.find((item) => item.value === searchParams.get("tab"))?.value ?? (searchParams.get("member") === null ? "features" : "violations");
 
@@ -497,6 +503,8 @@ function GroupPage({ group, backLink, onChange }: { group: Group; backLink: Reac
     { on: group.linkGuardEnabled, name: "Chặn link", kick: group.kickRules.link.enabled },
     { on: group.badWordFilterEnabled, name: "Lọc từ cấm", kick: group.kickRules.badWord.enabled },
     { on: group.spamGuardEnabled, name: "Chống spam", kick: group.kickRules.spam.enabled },
+    // Letting people in is not something a member can break, so it never kicks.
+    { on: group.joinApproval.enabled && group.botIsAdmin, name: "Duyệt tự động", kick: false },
   ];
   const active = group.botEnabled ? features.filter((feature) => feature.on) : [];
   const kicking = group.botIsAdmin ? active.filter((feature) => feature.kick) : [];
@@ -539,6 +547,7 @@ function GroupPage({ group, backLink, onChange }: { group: Group; backLink: Reac
           >
             {item.label}
             {item.value === "members" ? <span className="ml-1.5 tabular-nums text-muted">{formatNumber(group.memberCount)}</span> : null}
+            {item.value === "pending" && waiting !== undefined && waiting.items.length > 0 ? <span className="ml-1.5 tabular-nums text-muted">{formatNumber(waiting.items.length)}</span> : null}
             {item.value === "violations" && records !== undefined && records.length > 0 ? <span className="ml-1.5 tabular-nums text-muted">{formatNumber(records.length)}</span> : null}
           </button>
         ))}
@@ -550,6 +559,8 @@ function GroupPage({ group, backLink, onChange }: { group: Group; backLink: Reac
         </div>
       ) : tab === "members" ? (
         <GroupMembers group={group} />
+      ) : tab === "pending" ? (
+        <PendingMembers group={group} />
       ) : (
         <div className="space-y-4"><Statistics group={group} /></div>
       )}
