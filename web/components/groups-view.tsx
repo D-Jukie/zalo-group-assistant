@@ -25,6 +25,8 @@ const filters = [
   { value: "admin", label: "Bot là trưởng nhóm" },
   { value: "member", label: "Bot là thành viên" },
 ] as const;
+// What the page shows when the address names no filter: the groups the bot is at work in.
+const defaultFilter = "enabled";
 
 function RuleBadges({ group }: { group: Group }) {
   if (!group.botEnabled) return <span className="text-sm text-subtle">—</span>;
@@ -66,7 +68,7 @@ export function GroupsView() {
   const { data: status } = useSWR<BotStatus>("/status");
 
   const query = searchParams.get("q") ?? "";
-  const filter = filters.find((item) => item.value === searchParams.get("filter"))?.value ?? "all";
+  const filter = filters.find((item) => item.value === searchParams.get("filter"))?.value ?? defaultFilter;
   const requestedPage = Number(searchParams.get("page") ?? "1");
 
   const request = new URLSearchParams({ page: String(Number.isInteger(requestedPage) && requestedPage >= 1 ? requestedPage : 1), pageSize: String(pageSize) });
@@ -183,6 +185,8 @@ export function GroupsView() {
   const page = data?.page ?? 1;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const unfiltered = query.trim() === "" && filter === "all";
+  // The view the page opens on, with nothing in it: say where the groups are instead of "nothing matches".
+  const noneEnabled = query.trim() === "" && filter === defaultFilter;
 
   return (
     <>
@@ -218,7 +222,7 @@ export function GroupsView() {
               key={item.value}
               type="button"
               aria-pressed={filter === item.value}
-              onClick={() => setParams({ filter: item.value === "all" ? undefined : item.value, page: undefined })}
+              onClick={() => setParams({ filter: item.value === defaultFilter ? undefined : item.value, page: undefined })}
               className={cn(
                 "h-7 rounded px-2.5 text-sm transition-colors",
                 filter === item.value ? "bg-surface-hover font-medium text-foreground" : "text-muted hover:text-foreground",
@@ -238,8 +242,8 @@ export function GroupsView() {
           </div>
         ) : rows.length === 0 ? (
           <EmptyState
-            title={unfiltered ? "Chưa có nhóm nào" : "Không có nhóm nào khớp"}
-            description={unfiltered ? "Bấm “Đồng bộ từ Zalo” để lấy danh sách nhóm của tài khoản bot." : "Thử từ khóa khác hoặc bỏ bộ lọc."}
+            title={unfiltered ? "Chưa có nhóm nào" : noneEnabled ? "Chưa bật bot ở nhóm nào" : "Không có nhóm nào khớp"}
+            description={unfiltered ? "Bấm “Đồng bộ từ Zalo” để lấy danh sách nhóm của tài khoản bot." : noneEnabled ? "Chọn “Tất cả” để xem mọi nhóm của tài khoản bot và bật bot cho nhóm cần dùng." : "Thử từ khóa khác hoặc bỏ bộ lọc."}
           />
         ) : (
           <div className="overflow-x-auto">
