@@ -54,6 +54,7 @@ Dashboard là ứng dụng Next.js (App Router, Tailwind CSS, SWR) trong `web/`.
 | `/violations` | Nhật ký vi phạm trên mọi nhóm, lọc theo quy tắc, tải thêm tin cũ hơn |
 | `/reminders` | Lịch nhắc hẹn của Zalo ở mọi nhóm đang bật bot: nội dung, giờ bắt đầu, số người tham gia và từ chối, danh sách thành viên đã trả lời |
 | `/reminders/new` | Tạo một nhắc hẹn cho một hoặc nhiều nhóm cùng lúc |
+| `/broadcast` | Gửi tin nhắn hàng loạt: một tin của bot cho một hoặc nhiều nhóm, gửi ngay hoặc hẹn giờ |
 | `/setting` | Cài đặt của chính bảng điều khiển: sáng/tối, tự làm mới, số nhóm mỗi trang, kết nối tới bot, đăng xuất |
 
 Trang `/setting` không chứa cài đặt của bot. Những gì chọn ở đó chỉ lưu trên trình duyệt đang dùng.
@@ -154,12 +155,17 @@ Hai tính năng trên xét nội dung của từng tin; chống spam xét cách 
 Bot dùng tính năng `Nhắc hẹn` có sẵn của Zalo, nên thành viên thấy và trả lời nhắc hẹn như khi tạo bằng tay, và Zalo tự nhắc đúng giờ kể cả khi bot đang tắt.
 
 - **Tạo cho nhiều nhóm:** ở trang `/reminders/new`, chọn một hoặc nhiều nhóm (tối đa 100 nhóm mỗi lần), nhập nội dung (tối đa 200 ký tự), thời gian nhắc (chọn nhanh `15 phút nữa`, `30 phút nữa`, `9:00 ngày mai`, hoặc bấm ô ngày để tự chọn; mặc định 30 phút nữa) và kiểu lặp lại (không lặp, hằng ngày, hằng tuần, hằng tháng). Bot tạo lần lượt từng nhóm rồi báo kết quả của từng nhóm; nhóm lỗi có thể thử lại riêng.
-- **Tin nhắn kèm theo (không bắt buộc):** khi tạo nhắc hẹn có thể bật thêm hai tin nhắn do bot gửi vào nhóm, mỗi tin gồm chữ (tối đa 2000 ký tự), một ảnh (JPEG, PNG hoặc WebP), hoặc cả hai:
+- **Tin nhắn kèm theo (không bắt buộc):** khi tạo nhắc hẹn có thể bật thêm hai tin nhắn do bot gửi vào nhóm, mỗi tin gồm chữ (tối đa 2000 ký tự), tối đa 6 ảnh (JPEG, PNG hoặc WebP), hoặc cả hai:
   - `Gửi tin nhắn khi tạo nhắc hẹn`: gửi ngay sau khi nhắc hẹn được tạo ở nhóm đó.
-  - `Gửi tin nhắn khi đến giờ nhắc`: gửi đúng giờ nhắc, và mỗi lần nhắc nếu nhắc hẹn lặp lại. Tin này do bot gửi chứ không phải Zalo, nên bot phải đang chạy vào lúc đó; bot kiểm tra 15 giây một lần, và bỏ qua tin đã trễ hơn 30 phút hoặc thuộc nhóm đã tắt bot. Tin chờ gửi được lưu trong MongoDB (`reminder_messages`), nên bot khởi động lại không làm mất. Xóa nhắc hẹn từ dashboard thì tin chờ cũng bị hủy; xóa hoặc đổi giờ nhắc hẹn trực tiếp trên Zalo thì tin vẫn gửi theo giờ ban đầu, cho tới khi bạn hủy nó ở tab `Tin nhắn chờ gửi`.
-  - Ảnh nặng hơn 1 MB hoặc lớn hơn 2048 px được trình duyệt thu nhỏ và lưu thành JPEG trước khi gửi; ảnh sau khi thu nhỏ tối đa 5 MB.
+  - `Gửi tin nhắn khi đến giờ nhắc`: gửi đúng giờ nhắc, và mỗi lần nhắc nếu nhắc hẹn lặp lại. Tin này do bot gửi chứ không phải Zalo, nên bot phải đang chạy vào lúc đó; bot kiểm tra 15 giây một lần, và bỏ qua tin đã trễ hơn 30 phút hoặc thuộc nhóm đã tắt bot. Tin chờ gửi được lưu trong MongoDB (`reminder_messages`), nên bot khởi động lại không làm mất. Xóa nhắc hẹn từ dashboard thì tin chờ cũng bị hủy; xóa hoặc đổi giờ nhắc hẹn trực tiếp trên Zalo thì tin vẫn gửi theo giờ ban đầu, cho tới khi bạn hủy nó ở tab `Tin nhắn chờ gửi` của trang `/broadcast`.
+  - Thêm ảnh bằng nút `Chọn ảnh`, bằng cách kéo file ảnh thả vào ô soạn tin, hoặc dán ảnh đã sao chép (ví dụ ảnh chụp màn hình) vào ô nội dung.
+  - Nhiều ảnh trong một tin được gửi thành một album, theo đúng thứ tự đã chọn. Khi đó Zalo hiện phần chữ thành một tin riêng thay vì chú thích dưới ảnh.
+  - Ảnh nặng hơn 1 MB hoặc lớn hơn 2048 px được trình duyệt thu nhỏ và lưu thành JPEG trước khi gửi; mỗi ảnh sau khi thu nhỏ tối đa 5 MB, và các ảnh của một tin cộng lại tối đa 12 MB.
   - Nếu nhắc hẹn tạo được nhưng tin nhắn gặp lỗi, kết quả của nhóm đó ghi rõ lý do.
-- **Tin nhắn chờ gửi:** tab `Tin nhắn chờ gửi` ở trang `/reminders` liệt kê mọi tin bot còn phải gửi, tin sớm nhất trước: nội dung, ảnh, giờ gửi, nhóm và nhắc hẹn của nó. Mỗi tin có nút `Sửa` (đổi nội dung, đổi hoặc bỏ ảnh) và `Xóa` (hủy tin; nhắc hẹn trên Zalo giữ nguyên). Tin có nhãn `Không thấy nhắc hẹn trong lịch` là tin mà nhắc hẹn của nó không còn trên bảng của nhóm, thường vì đã bị xóa trực tiếp trên Zalo.
+- **Gửi tin nhắn hàng loạt:** trang `/broadcast` (mục riêng ở sidebar, tab `Soạn tin`) cho bot gửi một tin vào nhiều nhóm mà không tạo nhắc hẹn nào: chọn nhóm, soạn tin (chữ, tối đa 6 ảnh, hoặc cả hai), rồi chọn thời điểm gửi.
+  - `Gửi ngay`: sau khi bạn xác nhận, bot gửi lần lượt từng nhóm và báo kết quả của từng nhóm; nhóm lỗi có thể thử lại riêng. Tin đã gửi không thu hồi được từ dashboard.
+  - `Hẹn giờ`: chọn giờ và kiểu lặp lại như khi tạo nhắc hẹn. Tin dùng chung hàng chờ với tin `khi đến giờ nhắc`, nên cũng cần bot đang chạy vào giờ gửi, cũng bị bỏ qua nếu trễ hơn 30 phút hoặc nhóm đã tắt bot, và tin lặp lại được gửi tiếp cho tới khi bị hủy.
+- **Tin nhắn chờ gửi:** tab `Tin nhắn chờ gửi` ở trang `/broadcast` liệt kê mọi tin bot còn phải gửi (kèm nhắc hẹn lẫn hẹn giờ riêng), tin sớm nhất trước: nội dung, ảnh, giờ gửi, nhóm và nhắc hẹn của nó. Mỗi tin có nút `Sửa` (đổi nội dung, thêm hoặc bỏ từng ảnh) và `Xóa` (hủy tin; nhắc hẹn trên Zalo giữ nguyên). Tin có nhãn `Không thấy nhắc hẹn trong lịch` là tin mà nhắc hẹn của nó không còn trên bảng của nhóm, thường vì đã bị xóa trực tiếp trên Zalo.
 - **Lịch:** trang `/reminders` đọc bảng nhắc hẹn của mọi nhóm đang bật bot, kể cả nhắc hẹn do thành viên tạo, xếp theo ngày và chia thành `Sắp tới` / `Đã qua`. Nhắc hẹn lặp lại được xếp theo lần nhắc kế tiếp. Nhắc hẹn còn tin nhắn chờ gửi có nhãn `Có tin nhắn khi đến giờ`.
 - **Phản hồi:** mỗi nhắc hẹn hiện số người tham gia và từ chối; bấm `Thành viên` để xem tên từng người.
 - **Xuất danh sách:** nút `Xuất danh sách` trong bảng `Thành viên` tải về file Excel (`.xlsx`, cột đã chỉnh sẵn độ rộng theo nội dung) gồm những người tham gia và từ chối của nhắc hẹn đó. Mỗi dòng là một thành viên: nhóm, ID nhóm, nội dung, thời gian nhắc, kiểu lặp, tên, ID và phản hồi.
