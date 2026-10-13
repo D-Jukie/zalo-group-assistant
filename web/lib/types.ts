@@ -139,7 +139,7 @@ export type PendingReminderMessage = {
   // What the reminder says.
   title: string;
   text: string;
-  hasImage: boolean;
+  imageCount: number;
   dueAt: number;
   repeat: ReminderRepeat;
   updatedAt: number;

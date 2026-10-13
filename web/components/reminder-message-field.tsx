@@ -1,10 +1,13 @@
 "use client";
 
 import { ImagePlus, X } from "lucide-react";
-import { useId, useRef, useState } from "react";
+import { useId, useRef, useState, type DragEvent } from "react";
 import { cn, formatNumber } from "@/lib/format";
 
 export const maxMessageLength = 2000;
+// How many pictures one message may carry, and how heavy they may be together.
+export const maxMessageImages = 6;
+export const maxMessageImagesBytes = 12 * 1024 * 1024;
 // What the bot accepts for one picture, and the largest file worth trying to shrink to that.
 const maxImageBytes = 5 * 1024 * 1024;
 const maxOriginalBytes = 25 * 1024 * 1024;
@@ -13,28 +16,30 @@ const keepAsIsBytes = 1024 * 1024;
 const maxImageSide = 2048;
 const imageTypes = ["image/jpeg", "image/png", "image/webp"];
 
-// A message the bot posts alongside a reminder, as it is being written. The picture is kept as a
-// data URL, which serves both as its preview and as what is sent to the bot.
-export type MessageDraft = { enabled: boolean; text: string; image?: { name: string; size: number; dataUrl: string } };
+// A picture picked from the visitor's device, ready to send. It is kept as a data URL, which serves
+// both as its preview and as what is sent to the bot.
+export type PickedImage = { name: string; size: number; dataUrl: string };
+
+// A message the bot posts alongside a reminder, as it is being written.
+export type MessageDraft = { enabled: boolean; text: string; images: PickedImage[] };
 
 // The base64 part of a data URL ("data:image/png;base64,<data>"), which is what the bot takes.
 export function dataUrlPayload(dataUrl: string): string {
   return dataUrl.slice(dataUrl.indexOf(",") + 1);
 }
 
-export const emptyMessageDraft: MessageDraft = { enabled: false, text: "" };
+export const emptyMessageDraft: MessageDraft = { enabled: false, text: "", images: [] };
 
 // What is wrong with a message that has been switched on, if anything.
 export function messageProblem(draft: MessageDraft): string | undefined {
   if (!draft.enabled) return undefined;
-  return draft.text.trim() === "" && draft.image === undefined ? "hãy nhập nội dung hoặc chọn một ảnh" : undefined;
+  return draft.text.trim() === "" && draft.images.length === 0 ? "hãy nhập nội dung hoặc chọn ảnh" : undefined;
 }
 
 // The message as the bot's API takes it; undefined when it is switched off.
-export function toMessagePayload(draft: MessageDraft): { text: string; image?: { data: string } } | undefined {
+export function toMessagePayload(draft: MessageDraft): { text: string; images: { data: string }[] } | undefined {
   if (!draft.enabled) return undefined;
-  const text = draft.text.trim();
-  return draft.image === undefined ? { text } : { text, image: { data: dataUrlPayload(draft.image.dataUrl) } };
+  return { text: draft.text.trim(), images: draft.images.map((image) => ({ data: dataUrlPayload(image.dataUrl) })) };
 }
 
 function readAsDataUrl(file: Blob): Promise<string> {
@@ -72,43 +77,100 @@ async function prepareImage(file: File): Promise<{ size: number; dataUrl: string
   }
 }
 
-// A picture picked from the visitor's device, ready to send.
-export type PickedImage = { name: string; size: number; dataUrl: string };
+// What the editor shows for one picture of a message: one just picked, or one the bot already holds.
+// `size` is only known for a picture picked here.
+export type PictureView = { key: string; src: string; name: string; size?: number };
 
-// What the editor shows for the picture a message has: one just picked, or one the bot already holds.
-export type PictureView = { src: string; name: string; detail?: string };
-
-// The text of a message and its optional picture. Used while creating a reminder and when changing
-// a message that is waiting to be sent.
-export function MessageEditor({ text, onTextChange, picture, onPick, onRemovePicture, placeholder, pictureLabel }: {
+// The text of a message and its pictures. Used while creating a reminder, when sending a message to
+// several groups, and when changing a message that is waiting to be sent.
+export function MessageEditor({ text, onTextChange, pictures, onPick, onRemovePicture, placeholder, pictureLabel }: {
   text: string;
   onTextChange: (text: string) => void;
-  picture: PictureView | undefined;
-  onPick: (image: PickedImage) => void;
-  onRemovePicture: () => void;
+  pictures: PictureView[];
+  // Called once with every picture taken from one visit to the file dialog.
+  onPick: (images: PickedImage[]) => void;
+  onRemovePicture: (index: number) => void;
   placeholder: string;
   pictureLabel: string;
 }) {
   const id = useId();
   const fileInput = useRef<HTMLInputElement>(null);
   const [imageError, setImageError] = useState<string>();
+  const [reading, setReading] = useState(false);
+  const room = maxMessageImages - pictures.length;
+  // Whether files are being dragged over the editor. Entering a child fires another "enter" before the
+  // parent's "leave", so the two are counted rather than switched.
+  const [dragging, setDragging] = useState(false);
+  const dragDepth = useRef(0);
 
-  async function pickImage(file: File | undefined) {
-    if (file === undefined) return;
+  // Only a drag that carries files is of interest; dragged text is left to the browser.
+  function carriesFiles(event: DragEvent): boolean {
+    return event.dataTransfer.types.includes("Files");
+  }
+
+  function dragEnter(event: DragEvent) {
+    if (!carriesFiles(event)) return;
+    event.preventDefault();
+    dragDepth.current += 1;
+    setDragging(true);
+  }
+
+  function dragLeave(event: DragEvent) {
+    if (!carriesFiles(event)) return;
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDragging(false);
+  }
+
+  function drop(event: DragEvent) {
+    if (!carriesFiles(event)) return;
+    // Without this the browser would open the dropped picture in place of the page.
+    event.preventDefault();
+    dragDepth.current = 0;
+    setDragging(false);
+    void pickImages(Array.from(event.dataTransfer.files));
+  }
+
+  async function pickImages(files: File[]) {
+    if (files.length === 0) return;
     setImageError(undefined);
-    if (!imageTypes.includes(file.type)) return setImageError("Ảnh phải là JPEG, PNG hoặc WebP.");
-    if (file.size > maxOriginalBytes) return setImageError("Ảnh lớn tối đa 25 MB.");
+    // Pictures that do not fit are left out, and the note below says so.
+    const problems: string[] = [];
+    if (files.length > room) problems.push(`Mỗi tin tối đa ${maxMessageImages} ảnh; đã bỏ ${formatNumber(files.length - room)} ảnh.`);
+    const picked: PickedImage[] = [];
+    let weight = pictures.reduce((sum, picture) => sum + (picture.size ?? 0), 0);
+    setReading(true);
     try {
-      const prepared = await prepareImage(file);
-      if (prepared.size > maxImageBytes) return setImageError("Ảnh vẫn lớn hơn 5 MB sau khi thu nhỏ; hãy chọn ảnh khác.");
-      onPick({ name: file.name, ...prepared });
-    } catch (exception) {
-      setImageError(exception instanceof Error ? exception.message : "Không đọc được file ảnh");
+      for (const file of files.slice(0, Math.max(0, room))) {
+        if (!imageTypes.includes(file.type)) {
+          problems.push(`${file.name}: ảnh phải là JPEG, PNG hoặc WebP.`);
+          continue;
+        }
+        if (file.size > maxOriginalBytes) {
+          problems.push(`${file.name}: ảnh lớn tối đa 25 MB.`);
+          continue;
+        }
+        try {
+          const prepared = await prepareImage(file);
+          if (prepared.size > maxImageBytes) problems.push(`${file.name}: vẫn lớn hơn 5 MB sau khi thu nhỏ.`);
+          else if (weight + prepared.size > maxMessageImagesBytes) problems.push(`${file.name}: các ảnh của một tin tối đa 12 MB.`);
+          else {
+            weight += prepared.size;
+            picked.push({ name: file.name, ...prepared });
+          }
+        } catch (exception) {
+          problems.push(`${file.name}: ${exception instanceof Error ? exception.message : "không đọc được file ảnh"}`);
+        }
+      }
+    } finally {
+      setReading(false);
     }
+    if (picked.length > 0) onPick(picked);
+    if (problems.length > 0) setImageError(problems.join(" "));
   }
 
   return (
-    <div className="space-y-2">
+    // Pictures can be dropped anywhere on the editor, not only on the marked area.
+    <div className="space-y-2" onDragEnter={dragEnter} onDragOver={(event) => { if (carriesFiles(event)) event.preventDefault(); }} onDragLeave={dragLeave} onDrop={drop}>
       <label htmlFor={`${id}-text`} className="flex items-baseline justify-between gap-2 text-sm text-muted">
         Nội dung tin nhắn
         <span className="text-xs tabular-nums">{formatNumber(text.length)}/{formatNumber(maxMessageLength)}</span>
@@ -121,50 +183,76 @@ export function MessageEditor({ text, onTextChange, picture, onPick, onRemovePic
         placeholder={placeholder}
         value={text}
         onChange={(event) => onTextChange(event.target.value)}
+        onPaste={(event) => {
+          // A copied picture (a screenshot, say) is added to the message; pasted text goes in as usual.
+          const pasted = Array.from(event.clipboardData.files);
+          if (pasted.length === 0) return;
+          event.preventDefault();
+          void pickImages(pasted);
+        }}
         className="w-full min-w-0 resize-y rounded-md border border-border-strong bg-surface px-3 py-2 text-sm placeholder:text-subtle"
       />
-      {/* The file field itself stays out of sight; the button and the preview stand in for it. */}
+      {/* The file field itself stays out of sight; the button and the previews stand in for it. */}
       <input
         ref={fileInput}
         type="file"
+        multiple
         accept={imageTypes.join(",")}
         aria-label={pictureLabel}
         className="sr-only"
         tabIndex={-1}
         onChange={(event) => {
-          void pickImage(event.target.files?.[0]);
+          void pickImages(Array.from(event.target.files ?? []));
           // Lets the same file be picked again after it was removed.
           event.target.value = "";
         }}
       />
-      {picture === undefined ? (
-        <button type="button" onClick={() => fileInput.current?.click()} className="inline-flex h-8 items-center gap-2 rounded-md border border-border-strong px-2.5 text-sm transition-colors hover:bg-surface-hover">
-          <ImagePlus aria-hidden="true" className="size-4" />
-          Thêm ảnh
+      {pictures.length > 0 ? (
+        <ul className="flex flex-wrap gap-2">
+          {pictures.map((picture, index) => (
+            <li key={picture.key} className="relative">
+              <img src={picture.src} alt={`Ảnh ${index + 1}: ${picture.name}`} title={picture.name} width={72} height={72} className="size-[4.5rem] rounded-md border border-border object-cover" />
+              <button
+                type="button"
+                aria-label={`Bỏ ảnh ${index + 1}`}
+                onClick={() => onRemovePicture(index)}
+                className="absolute -right-1.5 -top-1.5 grid size-5 place-items-center rounded-full border border-border-strong bg-surface text-muted shadow-sm transition-colors hover:text-foreground"
+              >
+                <X aria-hidden="true" className="size-3" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {/* The marked area for pictures: drop them here, or use the button to pick them from the device. */}
+      <div
+        className={cn(
+          "flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-dashed px-3 py-3 text-sm transition-colors",
+          dragging ? (room > 0 ? "border-accent bg-accent/10" : "border-danger bg-danger-surface") : "border-border-strong",
+        )}
+      >
+        <ImagePlus aria-hidden="true" className={cn("size-5 shrink-0", dragging && room > 0 ? "text-accent" : "text-muted")} />
+        <span className="min-w-0 flex-1 basis-40 text-muted">
+          {dragging
+            ? room > 0 ? "Thả ảnh vào đây" : `Tin đã đủ ${maxMessageImages} ảnh`
+            : room > 0 ? "Kéo ảnh vào đây, dán ảnh vào ô nội dung, hoặc" : `Tin đã đủ ${maxMessageImages} ảnh`}
+        </span>
+        <button type="button" disabled={room <= 0 || reading} onClick={() => fileInput.current?.click()} className="inline-flex h-8 shrink-0 items-center rounded-md border border-border-strong bg-surface px-2.5 text-sm font-medium transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50">
+          Chọn ảnh
         </button>
-      ) : (
-        <div className="flex items-center gap-3">
-          <img src={picture.src} alt="Ảnh sẽ gửi kèm" width={56} height={56} className="size-14 shrink-0 rounded-md border border-border object-cover" />
-          <span className="min-w-0 flex-1 text-sm">
-            <span className="block truncate" translate="no">{picture.name}</span>
-            {picture.detail ? <span className="block text-xs tabular-nums text-muted">{picture.detail}</span> : null}
-          </span>
-          <button type="button" onClick={() => fileInput.current?.click()} className="h-8 shrink-0 rounded-md px-2.5 text-sm text-muted transition-colors hover:bg-surface-hover hover:text-foreground">Đổi ảnh</button>
-          <button type="button" aria-label="Bỏ ảnh" onClick={onRemovePicture} className="grid size-8 shrink-0 place-items-center rounded-md text-muted transition-colors hover:bg-surface-hover hover:text-foreground">
-            <X aria-hidden="true" className="size-4" />
-          </button>
-        </div>
-      )}
+        <span className="shrink-0 text-xs tabular-nums text-muted">{reading ? "Đang xử lý ảnh…" : `${formatNumber(pictures.length)}/${maxMessageImages} ảnh`}</span>
+      </div>
       <p role="status" aria-live="polite" className={cn("text-sm text-danger", imageError === undefined && "sr-only")}>{imageError ?? ""}</p>
     </div>
   );
 }
 
-export function imageDetail(image: PickedImage): string {
-  return `${formatNumber(Math.max(1, Math.round(image.size / 1024)))} KB`;
+// How a picture that was just picked shows in the editor.
+export function pickedPictureView(image: PickedImage, index: number): PictureView {
+  return { key: `${index}-${image.name}-${image.size}`, src: image.dataUrl, name: image.name, size: image.size };
 }
 
-// One optional message: a switch, and once it is on, the text and an optional picture.
+// One optional message: a switch, and once it is on, the text and its pictures.
 export function MessageField({ label, hint, placeholder, value, onChange }: { label: string; hint: string; placeholder: string; value: MessageDraft; onChange: (value: MessageDraft) => void }) {
   return (
     <div className="rounded-md border border-border">
@@ -180,9 +268,9 @@ export function MessageField({ label, hint, placeholder, value, onChange }: { la
           <MessageEditor
             text={value.text}
             onTextChange={(text) => onChange({ ...value, text })}
-            picture={value.image === undefined ? undefined : { src: value.image.dataUrl, name: value.image.name, detail: imageDetail(value.image) }}
-            onPick={(image) => onChange({ ...value, image })}
-            onRemovePicture={() => onChange({ enabled: value.enabled, text: value.text })}
+            pictures={value.images.map(pickedPictureView)}
+            onPick={(images) => onChange({ ...value, images: [...value.images, ...images] })}
+            onRemovePicture={(index) => onChange({ ...value, images: value.images.filter((_image, position) => position !== index) })}
             placeholder={placeholder}
             pictureLabel={`Ảnh kèm theo: ${label}`}
           />

@@ -8,9 +8,8 @@ import useSWR from "swr";
 import { errorText, fetcher, send } from "@/lib/api";
 import { downloadExcel, slug } from "@/lib/excel";
 import { cn, formatClock, formatDateTime, formatFullDay, formatNumber, localDayKey } from "@/lib/format";
-import { reminderRepeatLabels, type GroupReminder, type PendingReminderMessage, type ReminderList, type ReminderMember, type ReminderResponses } from "@/lib/types";
+import { reminderRepeatLabels, type GroupReminder, type ReminderList, type ReminderMember, type ReminderResponses } from "@/lib/types";
 import { ConfirmDialog } from "./confirm-dialog";
-import { PendingMessages } from "./pending-messages";
 import { useToast } from "./toast";
 import { Badge, Button, Card, EmptyState, PageHeader, Skeleton, StatTile } from "./ui";
 import { GroupLink } from "./violation-item";
@@ -18,7 +17,6 @@ import { GroupLink } from "./violation-item";
 const views = [
   { value: "upcoming", label: "Sắp tới" },
   { value: "past", label: "Đã qua" },
-  { value: "messages", label: "Tin nhắn chờ gửi" },
 ] as const;
 
 const primaryLink = "inline-flex h-9 items-center justify-center gap-2 rounded-md bg-foreground px-3 text-sm font-medium text-background transition-opacity hover:opacity-85";
@@ -130,14 +128,13 @@ function ReminderItem({ reminder, onRemove }: { reminder: GroupReminder; onRemov
 }
 
 // Zalo's own reminders in every group the bot is switched on for, as a day-by-day agenda.
-// Which part is shown (upcoming, past, or the messages waiting to be sent) lives in the URL.
+// Which half is shown (upcoming or past) lives in the URL.
 export function RemindersView() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const view = views.find((item) => item.value === searchParams.get("view"))?.value ?? "upcoming";
   const { data, error, mutate } = useSWR<ReminderList>("/reminders");
-  const { data: waiting } = useSWR<PendingReminderMessage[]>("/reminder-messages");
   const [refreshing, setRefreshing] = useState(false);
   const toast = useToast();
   const [removing, setRemoving] = useState<GroupReminder>();
@@ -216,7 +213,7 @@ export function RemindersView() {
           Không đọc được nhắc hẹn của {formatNumber(data.failed.length)} nhóm: {data.failed.slice(0, 3).map((item) => item.groupName || item.groupId).join(", ")}{data.failed.length > 3 ? "…" : ""} ({data.failed[0]?.error})
         </p>
       ) : null}
-      <div role="group" aria-label="Chọn phần hiển thị" className="mb-4 inline-flex gap-1 rounded-md border border-border bg-surface p-1">
+      <div role="group" aria-label="Chọn nhắc hẹn sắp tới hoặc đã qua" className="mb-4 inline-flex gap-1 rounded-md border border-border bg-surface p-1">
         {views.map((item) => (
           <button
             key={item.value}
@@ -229,13 +226,10 @@ export function RemindersView() {
             )}
           >
             {item.label}
-            {item.value === "messages" && waiting !== undefined && waiting.length > 0 ? <span className="ml-1.5 tabular-nums text-muted">{formatNumber(waiting.length)}</span> : null}
           </button>
         ))}
       </div>
-      {view === "messages" ? (
-        <PendingMessages reminders={data} />
-      ) : data === undefined ? (
+      {data === undefined ? (
         <Card>
           <div className="space-y-3 p-5">
             {error ? <p className="text-sm text-danger">{errorText(error)}</p> : Array.from({ length: 4 }, (_item, index) => <Skeleton key={index} className="h-16 w-full" />)}
