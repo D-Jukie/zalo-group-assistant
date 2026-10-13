@@ -9,12 +9,17 @@ import { RowCheckbox, RowNumber, SelectAllCheckbox, useSelection } from "./selec
 import { useToast } from "./toast";
 import { Badge, Button, Card, CardHeader, EmptyState, Input, Skeleton } from "./ui";
 
+function Frame({ embedded, children }: { embedded: boolean; children: ReactNode }) {
+  return embedded ? <div className="min-w-0">{children}</div> : <Card>{children}</Card>;
+}
+
 function itself(item: string): string {
   return item;
 }
 
 // A list of strings the admin maintains (blocked links, banned words): add with the form, remove per item.
-export function ListManager({ title, description, path, field, inputLabel, placeholder, maxLength, emptyTitle, emptyDescription, notice }: {
+// On its own it is a card; `embedded` leaves the card out so it can be part of another one.
+export function ListManager({ title, description, path, field, inputLabel, placeholder, maxLength, emptyTitle, emptyDescription, notice, embedded = false }: {
   title: string;
   description: ReactNode;
   path: string;
@@ -25,6 +30,7 @@ export function ListManager({ title, description, path, field, inputLabel, place
   emptyTitle: string;
   emptyDescription: string;
   notice?: (items: string[]) => ReactNode;
+  embedded?: boolean;
 }) {
   const { data: items, error: loadError, mutate } = useSWR<string[]>(path);
   const [adding, setAdding] = useState(false);
@@ -81,8 +87,18 @@ export function ListManager({ title, description, path, field, inputLabel, place
   const chosen = selection.items.filter((item) => items?.includes(item) ?? false);
 
   return (
-    <Card>
-      <CardHeader title={title} description={description} action={items ? <Badge>{items.length} mục</Badge> : undefined} />
+    <Frame embedded={embedded}>
+      {embedded ? (
+        <div className="flex items-start justify-between gap-3 px-5 pt-4">
+          <div className="min-w-0">
+            <h3 className="text-sm font-medium">{title}</h3>
+            <p className="mt-1 text-sm text-muted">{description}</p>
+          </div>
+          {items ? <Badge>{items.length} mục</Badge> : null}
+        </div>
+      ) : (
+        <CardHeader title={title} description={description} action={items ? <Badge>{items.length} mục</Badge> : undefined} />
+      )}
       <div className="p-5">
         <form onSubmit={add} className="flex gap-2">
           <label htmlFor={inputId} className="sr-only">{inputLabel}</label>
@@ -94,7 +110,10 @@ export function ListManager({ title, description, path, field, inputLabel, place
       {items === undefined ? (
         <div className="space-y-2 px-5 pb-5">{loadError ? <p className="text-sm text-danger">{errorText(loadError)}</p> : <><Skeleton className="h-9 w-full" /><Skeleton className="h-9 w-full" /></>}</div>
       ) : items.length === 0 ? (
-        <div className="border-t border-border"><EmptyState title={emptyTitle} description={emptyDescription} /></div>
+        embedded
+          // Inside another card an empty list is one quiet line, not a block that leaves the card half empty.
+          ? <p className="border-t border-border px-5 py-4 text-sm text-muted"><span className="font-medium text-foreground">{emptyTitle}.</span> {emptyDescription}</p>
+          : <div className="border-t border-border"><EmptyState title={emptyTitle} description={emptyDescription} /></div>
       ) : (
         <ul className="max-h-96 divide-y divide-border overflow-y-auto overscroll-contain border-t border-border">
           <li className="px-5 py-2">
@@ -132,6 +151,6 @@ export function ListManager({ title, description, path, field, inputLabel, place
       >
         Các mục đã chọn sẽ không còn được áp dụng. Muốn dùng lại phải thêm lại từng mục.
       </ConfirmDialog>
-    </Card>
+    </Frame>
   );
 }

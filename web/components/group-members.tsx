@@ -165,8 +165,8 @@ export function GroupMembers({ group }: { group: Group }) {
                   </td>
                   <td className="px-5 text-right tabular-nums">
                     {member.violations === 0 ? <span className="text-subtle">0</span> : (
-                      // Opens the member's logged messages in the statistics below.
-                      <Link href={`?member=${encodeURIComponent(member.userId)}`} scroll={false} className="font-medium text-danger underline-offset-4 hover:underline" title="Xem các tin vi phạm">
+                      // Opens the member's logged messages on the violations tab.
+                      <Link href={`?tab=violations&member=${encodeURIComponent(member.userId)}`} scroll={false} className="font-medium text-danger underline-offset-4 hover:underline" title="Xem các tin vi phạm">
                         {formatNumber(member.violations)}
                       </Link>
                     )}

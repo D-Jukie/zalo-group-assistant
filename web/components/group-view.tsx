@@ -6,14 +6,14 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState, type FormEvent, type ReactNode } from "react";
 import useSWR, { useSWRConfig } from "swr";
 import { ApiError, errorText, send } from "@/lib/api";
-import { formatDateTime, formatKickRule, formatNumber, splitWindow, windowUnits } from "@/lib/format";
+import { cn, formatDateTime, formatNumber, splitWindow, windowUnits } from "@/lib/format";
 import { ruleLabels, totalViolations, violationRules, type Group, type GroupToggle, type KickRule, type MemberViolations, type RateRule, type SpamSettings, type ViolationMessage, type ViolationRule } from "@/lib/types";
 import { ConfirmDialog } from "./confirm-dialog";
 import { GroupMembers } from "./group-members";
 import { ListManager } from "./list-manager";
 import { RowCheckbox, RowNumber, SelectAllCheckbox, SelectionBar, useSelection } from "./selection";
 import { useToast } from "./toast";
-import { Badge, Button, Card, CardHeader, EmptyState, Input, PageHeader, Skeleton, Switch } from "./ui";
+import { Badge, Button, Card, CardHeader, CompactSwitch, EmptyState, Input, Skeleton, StatTile, Switch } from "./ui";
 import { ViolationItem } from "./violation-item";
 
 const toggleNames: Record<GroupToggle, string> = { bot: "bot ở nhóm này", links: "chặn link", "bad-words": "lọc từ cấm", spam: "chống spam" };
@@ -32,18 +32,17 @@ function useToggle(group: Group, onChange: (group: Group) => void) {
   return { toggle };
 }
 
-// The master switch. While it is off the bot ignores the group entirely, so everything below is inactive.
+// The master switch, in the page header. While it is off the bot ignores the group entirely.
 function BotSwitch({ group, onChange }: { group: Group; onChange: (group: Group) => void }) {
   const { toggle } = useToggle(group, onChange);
   return (
-    <Card className="px-5">
-      <Switch
-        checked={group.botEnabled}
-        onChange={(value) => toggle("bot", value)}
-        label="Bật bot ở nhóm này"
-        description={group.botEnabled ? "Bot đang theo dõi tin nhắn của nhóm theo các tính năng bên dưới." : "Bot đang bỏ qua hoàn toàn nhóm này: không kiểm tra, không ghi nhận, không xóa tin, không kick."}
-      />
-    </Card>
+    <div className="flex items-center gap-3 rounded-lg border border-border bg-surface px-3 py-2">
+      <span className="text-sm">
+        <span className="block font-medium">{group.botEnabled ? "Bot đang bật" : "Bot đang tắt"}</span>
+        <span className="block text-xs text-muted">{group.botIsAdmin ? "Bot là QTV" : "Bot là thành viên"}</span>
+      </span>
+      <CompactSwitch checked={group.botEnabled} onChange={(value) => toggle("bot", value)} label="Bật bot ở nhóm này" />
+    </div>
   );
 }
 
@@ -91,9 +90,9 @@ function KickSetting({ group, rule, featureOn, onSaved }: { group: Group; rule: 
           <fieldset className="flex flex-wrap items-center gap-2 text-sm">
             <legend className="sr-only">Ngưỡng kick của {ruleLabels[rule]}</legend>
             <label htmlFor={`${fieldId}-count`}>Kick khi đủ</label>
-            <Input id={`${fieldId}-count`} name="count" type="number" inputMode="numeric" autoComplete="off" min={1} max={100} required value={count} onChange={(event) => setCount(event.target.value)} className="w-20 tabular-nums" />
+            <Input id={`${fieldId}-count`} name="count" type="number" inputMode="numeric" autoComplete="off" min={1} max={100} required value={count} onChange={(event) => setCount(event.target.value)} className="max-w-20 tabular-nums" />
             <label htmlFor={`${fieldId}-amount`}>lần trong</label>
-            <Input id={`${fieldId}-amount`} name="amount" type="number" inputMode="numeric" autoComplete="off" min={1} required value={amount} onChange={(event) => setAmount(event.target.value)} className="w-20 tabular-nums" />
+            <Input id={`${fieldId}-amount`} name="amount" type="number" inputMode="numeric" autoComplete="off" min={1} required value={amount} onChange={(event) => setAmount(event.target.value)} className="max-w-20 tabular-nums" />
             <label htmlFor={`${fieldId}-unit`} className="sr-only">Đơn vị thời gian</label>
             <select id={`${fieldId}-unit`} name="unit" value={unitSeconds} onChange={(event) => setUnitSeconds(Number(event.target.value))} className="h-9 rounded-md border border-border-strong px-2 text-sm">
               {windowUnits.map((unit) => <option key={unit.seconds} value={unit.seconds}>{unit.label}</option>)}
@@ -153,10 +152,10 @@ function SpamSettingsForm({ group, onSaved }: { group: Group; onSaved: (group: G
           {label}
         </label>
         <label htmlFor={`spam-${key}-count`} className="sr-only">Số {unit} của mục {label}</label>
-        <Input id={`spam-${key}-count`} name={`${key}-count`} type="number" inputMode="numeric" autoComplete="off" min={2} max={50} required disabled={!rule.enabled} value={rule.count} onChange={(event) => change({ count: event.target.value })} className="w-20 tabular-nums" />
+        <Input id={`spam-${key}-count`} name={`${key}-count`} type="number" inputMode="numeric" autoComplete="off" min={2} max={50} required disabled={!rule.enabled} value={rule.count} onChange={(event) => change({ count: event.target.value })} className="max-w-20 tabular-nums" />
         <span>{unit} trong</span>
         <label htmlFor={`spam-${key}-window`} className="sr-only">Số giây của mục {label}</label>
-        <Input id={`spam-${key}-window`} name={`${key}-window`} type="number" inputMode="numeric" autoComplete="off" min={1} max={3600} required disabled={!rule.enabled} value={rule.windowSeconds} onChange={(event) => change({ windowSeconds: event.target.value })} className="w-20 tabular-nums" />
+        <Input id={`spam-${key}-window`} name={`${key}-window`} type="number" inputMode="numeric" autoComplete="off" min={1} max={3600} required disabled={!rule.enabled} value={rule.windowSeconds} onChange={(event) => change({ windowSeconds: event.target.value })} className="max-w-20 tabular-nums" />
         <span>giây</span>
       </div>
     );
@@ -178,7 +177,9 @@ function SpamSettingsForm({ group, onSaved }: { group: Group; onSaved: (group: G
   );
 }
 
-// One feature of the bot in this group: its on/off switch and, underneath, its own kick setting.
+// One feature of the bot in this group, as a card as wide as the page: its on/off switch in the
+// header and, underneath, two columns that always fill the card: what the feature looks for on the
+// left, what happens to a member who keeps breaking it on the right.
 function FeatureCard({ group, rule, toggleName, enabled, title, description, onChange, children }: {
   group: Group;
   rule: ViolationRule;
@@ -187,40 +188,49 @@ function FeatureCard({ group, rule, toggleName, enabled, title, description, onC
   title: string;
   description: string;
   onChange: (group: Group) => void;
-  // The feature's own settings, shown between its switch and its kick setting.
-  children?: ReactNode;
+  // What the feature looks for: its own list or settings.
+  children: ReactNode;
 }) {
   const { toggle } = useToggle(group, onChange);
   const kickRule = group.kickRules[rule];
   return (
     <Card>
-      <CardHeader title={title} description={description} action={enabled ? <Badge tone="success">Đang bật</Badge> : <Badge>Tắt</Badge>} />
-      <div className="divide-y divide-border px-5">
-        <div>
-          <Switch
-            checked={enabled}
-            onChange={(value) => toggle(toggleName, value)}
-            label={`Bật ${title.toLowerCase()}`}
-            description={group.botIsAdmin ? "Tin vi phạm bị xóa và được ghi vào thống kê." : "Bot không phải QTV nên chỉ ghi nhận vi phạm, không xóa được tin."}
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4">
+        <div className="min-w-0 flex-1 basis-72">
+          <h2 className="flex items-center gap-2 text-sm font-semibold">
+            {title}
+            {enabled ? <Badge tone="success">Đang bật</Badge> : <Badge>Tắt</Badge>}
+          </h2>
+          <p className="mt-1 text-sm text-muted">{description}</p>
+        </div>
+        <CompactSwitch checked={enabled} onChange={(value) => toggle(toggleName, value)} label={`Bật ${title.toLowerCase()}`} />
+      </div>
+      <div className="grid divide-y divide-border lg:grid-cols-2 lg:divide-x lg:divide-y-0">
+        <div className="min-w-0">{children}</div>
+        <div className="min-w-0 px-5 py-1">
+          <p className="pt-3 text-sm font-medium">Khi có vi phạm</p>
+          <p className="mt-1 text-sm text-muted">{group.botIsAdmin ? "Tin vi phạm bị xóa và được ghi vào thống kê." : "Bot không phải QTV nên chỉ ghi nhận vi phạm, không xóa được tin."}</p>
+          <KickSetting
+            // Saved numbers remount the form so its fields show the stored values again.
+            key={`${kickRule.enabled}-${kickRule.count}-${kickRule.windowSeconds}`}
+            group={group}
+            rule={rule}
+            featureOn={enabled}
+            onSaved={onChange}
           />
         </div>
-        {children}
-        <KickSetting
-          // Saved numbers remount the form so its fields show the stored values again.
-          key={`${kickRule.enabled}-${kickRule.count}-${kickRule.windowSeconds}`}
-          group={group}
-          rule={rule}
-          featureOn={enabled}
-          onSaved={onChange}
-        />
       </div>
     </Card>
   );
 }
 
-function SettingsCards({ group, onChange }: { group: Group; onChange: (group: Group) => void }) {
+// The three features, one under the other. Each carries the list or settings that belong to it,
+// so nothing about a feature has to be looked for elsewhere on the page.
+function FeatureCards({ group, onChange }: { group: Group; onChange: (group: Group) => void }) {
+  const base = `/groups/${encodeURIComponent(group.groupId)}`;
+  const sharedLists = <Link href="/features" className="text-foreground underline underline-offset-4 hover:text-accent">Tính năng</Link>;
   return (
-    <div className="grid items-start gap-4 lg:grid-cols-2">
+    <div className="space-y-4">
       <FeatureCard
         group={group}
         rule="link"
@@ -229,7 +239,20 @@ function SettingsCards({ group, onChange }: { group: Group; onChange: (group: Gr
         title="Chặn link"
         description="Link mời nhóm Zalo và các trang trong danh sách chung lẫn danh sách riêng của nhóm, kể cả trong mã QR."
         onChange={onChange}
-      />
+      >
+        <ListManager
+          embedded
+          title="Link bị chặn riêng"
+          description={<>Chỉ áp dụng cho nhóm này, cộng thêm vào danh sách chung ở trang {sharedLists}.</>}
+          path={`${base}/blocked-links`}
+          field="link"
+          inputLabel="Tên miền hoặc link cần chặn trong nhóm này"
+          placeholder="example.com…"
+          maxLength={200}
+          emptyTitle="Nhóm này chưa có link chặn riêng"
+          emptyDescription="Nhóm đang dùng link mời nhóm Zalo và danh sách chung."
+        />
+      </FeatureCard>
       <FeatureCard
         group={group}
         rule="badWord"
@@ -238,7 +261,20 @@ function SettingsCards({ group, onChange }: { group: Group; onChange: (group: Gr
         title="Lọc từ cấm"
         description="Tin chứa từ hoặc cụm từ trong danh sách chung hoặc danh sách riêng của nhóm."
         onChange={onChange}
-      />
+      >
+        <ListManager
+          embedded
+          title="Từ cấm riêng"
+          description={<>Chỉ áp dụng cho nhóm này, cộng thêm vào danh sách chung ở trang {sharedLists}.</>}
+          path={`${base}/banned-words`}
+          field="word"
+          inputLabel="Từ hoặc cụm từ cần chặn trong nhóm này"
+          placeholder="Từ hoặc cụm từ…"
+          maxLength={50}
+          emptyTitle="Nhóm này chưa có từ cấm riêng"
+          emptyDescription="Nhóm đang dùng danh sách từ cấm chung."
+        />
+      </FeatureCard>
       <FeatureCard
         group={group}
         rule="spam"
@@ -248,41 +284,11 @@ function SettingsCards({ group, onChange }: { group: Group; onChange: (group: Gr
         description="Bắt theo cách thành viên gửi tin: gửi dồn dập, lặp một nội dung, hoặc tin có số điện thoại, số tài khoản."
         onChange={onChange}
       >
-        {/* Saved settings remount the form so its fields show the stored values again. */}
-        <SpamSettingsForm key={JSON.stringify(group.spamSettings)} group={group} onSaved={onChange} />
+        <div className="px-5 py-1">
+          {/* Saved settings remount the form so its fields show the stored values again. */}
+          <SpamSettingsForm key={JSON.stringify(group.spamSettings)} group={group} onSaved={onChange} />
+        </div>
       </FeatureCard>
-    </div>
-  );
-}
-
-// Links and words blocked in this group only, on top of the shared lists on the settings page.
-function GroupLists({ group }: { group: Group }) {
-  const base = `/groups/${encodeURIComponent(group.groupId)}`;
-  const settingLink = <Link href="/setting" className="text-foreground underline underline-offset-4 hover:text-accent">Cài đặt</Link>;
-  return (
-    <div className="grid items-start gap-4 lg:grid-cols-2">
-      <ListManager
-        title="Link bị chặn riêng"
-        description={<>Chỉ áp dụng cho nhóm này, cộng thêm vào danh sách chung ở {settingLink}.{group.linkGuardEnabled ? "" : " Nhóm đang tắt “Chặn link” nên danh sách chưa có tác dụng."}</>}
-        path={`${base}/blocked-links`}
-        field="link"
-        inputLabel="Tên miền hoặc link cần chặn trong nhóm này"
-        placeholder="example.com…"
-        maxLength={200}
-        emptyTitle="Nhóm này chưa có link chặn riêng"
-        emptyDescription="Nhóm đang dùng link mời nhóm Zalo và danh sách chung."
-      />
-      <ListManager
-        title="Từ cấm riêng"
-        description={<>Chỉ áp dụng cho nhóm này, cộng thêm vào danh sách chung ở {settingLink}.{group.badWordFilterEnabled ? "" : " Nhóm đang tắt “Lọc từ cấm” nên danh sách chưa có tác dụng."}</>}
-        path={`${base}/banned-words`}
-        field="word"
-        inputLabel="Từ hoặc cụm từ cần chặn trong nhóm này"
-        placeholder="Từ hoặc cụm từ…"
-        maxLength={50}
-        emptyTitle="Nhóm này chưa có từ cấm riêng"
-        emptyDescription="Nhóm đang dùng danh sách từ cấm chung."
-      />
     </div>
   );
 }
@@ -460,30 +466,93 @@ export function GroupView({ groupId }: { groupId: string }) {
     void mutateGlobal((key) => typeof key === "string" && (key.startsWith("/groups?") || key === "/groups/summary"));
   }
 
-  const featureSummary = !group.botEnabled ? "Bot đang tắt" : [
-    group.linkGuardEnabled ? `Chặn link (${formatKickRule(group.kickRules.link, group.botIsAdmin)})` : undefined,
-    group.badWordFilterEnabled ? `Lọc từ cấm (${formatKickRule(group.kickRules.badWord, group.botIsAdmin)})` : undefined,
-    group.spamGuardEnabled ? `Chống spam (${formatKickRule(group.kickRules.spam, group.botIsAdmin)})` : undefined,
-  ].filter(Boolean).join(" · ") || "Chưa bật tính năng nào";
+  return <GroupPage group={group} backLink={backLink} onChange={applyChange} />;
+}
+
+const tabs = [
+  { value: "features", label: "Tính năng" },
+  { value: "members", label: "Thành viên" },
+  { value: "violations", label: "Vi phạm" },
+] as const;
+
+type Tab = (typeof tabs)[number]["value"];
+
+// One group: who it is and whether the bot is on, the numbers at a glance, and then one part at a
+// time (the features, the members or the violations) so no part leaves a hole beside another.
+// Which part is open lives in the URL.
+function GroupPage({ group, backLink, onChange }: { group: Group; backLink: ReactNode; onChange: (group: Group) => void }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const { data: records } = useSWR<MemberViolations[]>(`/groups/${encodeURIComponent(group.groupId)}/violations`);
+  // A link to a member's messages opens the violations tab, whether or not it names the tab.
+  const tab: Tab = tabs.find((item) => item.value === searchParams.get("tab"))?.value ?? (searchParams.get("member") === null ? "features" : "violations");
+
+  function openTab(value: Tab) {
+    // The open member belongs to the violations tab and does not follow to another one.
+    router.replace(value === "features" ? pathname : `${pathname}?tab=${value}`, { scroll: false });
+  }
+
+  const features = [
+    { on: group.linkGuardEnabled, name: "Chặn link", kick: group.kickRules.link.enabled },
+    { on: group.badWordFilterEnabled, name: "Lọc từ cấm", kick: group.kickRules.badWord.enabled },
+    { on: group.spamGuardEnabled, name: "Chống spam", kick: group.kickRules.spam.enabled },
+  ];
+  const active = group.botEnabled ? features.filter((feature) => feature.on) : [];
+  const kicking = group.botIsAdmin ? active.filter((feature) => feature.kick) : [];
+  const violationTotal = records?.reduce((sum, record) => sum + totalViolations(record.counts), 0);
+  const kickTotal = records?.reduce((sum, record) => sum + record.kicks, 0);
+  const pending = <Skeleton className="h-9 w-16" />;
 
   return (
     <>
       {backLink}
-      <PageHeader
-        title={group.name || group.groupId}
-        description={<><span className="tabular-nums">{formatNumber(group.memberCount)}</span> thành viên · ID <span className="font-mono" translate="no">{group.groupId}</span> · {featureSummary}</>}
-        action={group.botIsAdmin ? <Badge tone="success">Bot là QTV</Badge> : <Badge tone="warning">Bot là thành viên: chỉ ghi nhận</Badge>}
-      />
-      <div className="space-y-4">
-        <BotSwitch group={group} onChange={applyChange} />
-        {/* With the bot off, the settings stay visible for reference but cannot be changed or focused. */}
-        <div inert={!group.botEnabled} className={group.botEnabled ? "space-y-4" : "space-y-4 opacity-50"}>
-          <SettingsCards group={group} onChange={applyChange} />
-          <GroupLists group={group} />
+      <header className="flex flex-wrap items-start justify-between gap-4 pb-6">
+        <div className="min-w-0 flex-1 basis-80">
+          <h1 className="truncate text-2xl font-semibold tracking-tight" title={group.name || group.groupId}>{group.name || group.groupId}</h1>
+          <p className="mt-1 text-sm text-muted">ID <span className="font-mono" translate="no">{group.groupId}</span></p>
         </div>
-        <GroupMembers group={group} />
-        <Statistics group={group} />
+        <BotSwitch group={group} onChange={onChange} />
+      </header>
+      {group.botEnabled ? null : (
+        <p role="status" className="mb-4 rounded-md border border-warning/30 bg-warning-surface px-4 py-3 text-sm text-warning">
+          Bot đang bỏ qua hoàn toàn nhóm này: không kiểm tra, không ghi nhận, không xóa tin, không kick. Bật bot ở góc trên để các tính năng có hiệu lực.
+        </p>
+      )}
+      <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatTile label="Thành viên" value={formatNumber(group.memberCount)} hint={group.botIsAdmin ? "Bot là trưởng hoặc phó nhóm" : "Bot là thành viên: chỉ ghi nhận"} />
+        <StatTile label="Tính năng đang bật" value={`${active.length}/${features.length}`} hint={active.length === 0 ? (group.botEnabled ? "Chưa bật tính năng nào" : "Bot đang tắt") : active.map((feature) => feature.name).join(", ")} />
+        <StatTile label="Vi phạm" value={violationTotal === undefined ? pending : formatNumber(violationTotal)} hint={records === undefined ? undefined : `${formatNumber(records.length)} thành viên từng vi phạm`} />
+        <StatTile label="Đã kick" value={kickTotal === undefined ? pending : formatNumber(kickTotal)} hint={kicking.length === 0 ? "Chưa tính năng nào bật kick" : `Đang kick: ${kicking.map((feature) => feature.name).join(", ")}`} />
       </div>
+      <div role="group" aria-label="Chọn phần của nhóm" className="mb-4 inline-flex max-w-full flex-wrap gap-1 rounded-md border border-border bg-surface p-1">
+        {tabs.map((item) => (
+          <button
+            key={item.value}
+            type="button"
+            aria-pressed={tab === item.value}
+            onClick={() => openTab(item.value)}
+            className={cn(
+              "h-7 rounded px-2.5 text-sm transition-colors",
+              tab === item.value ? "bg-surface-hover font-medium text-foreground" : "text-muted hover:text-foreground",
+            )}
+          >
+            {item.label}
+            {item.value === "members" ? <span className="ml-1.5 tabular-nums text-muted">{formatNumber(group.memberCount)}</span> : null}
+            {item.value === "violations" && records !== undefined && records.length > 0 ? <span className="ml-1.5 tabular-nums text-muted">{formatNumber(records.length)}</span> : null}
+          </button>
+        ))}
+      </div>
+      {tab === "features" ? (
+        // With the bot off, the settings stay visible for reference but cannot be changed or focused.
+        <div inert={!group.botEnabled} className={group.botEnabled ? undefined : "opacity-50"}>
+          <FeatureCards group={group} onChange={onChange} />
+        </div>
+      ) : tab === "members" ? (
+        <GroupMembers group={group} />
+      ) : (
+        <div className="space-y-4"><Statistics group={group} /></div>
+      )}
     </>
   );
 }
