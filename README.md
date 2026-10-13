@@ -148,7 +148,7 @@ Bot mở API ngay khi khởi động, trước cả khi đăng nhập Zalo, đ�
 - Mã xác thực có hiệu lực 5 phút, dùng một lần, tối đa 5 lần nhập sai; mỗi phút chỉ gửi được một mã.
 - Phiên đăng nhập gắn với trình duyệt, lưu trong MongoDB (collection `admin_sessions`, chỉ lưu mã băm) và bị xóa khi đăng xuất.
 - `Ghi nhớ thiết bị này 30 ngày` giữ phiên 30 ngày; bỏ chọn thì cookie mất khi đóng trình duyệt và phiên hết hạn sau 12 giờ.
-- Trình duyệt đã được ghi nhớ mà bot mất phiên Zalo thì chỉ cần nhập mã PIN và quét lại QR, không cần mã xác thực nữa.
+- Khi bot mất phiên Zalo, trình duyệt đã được ghi nhớ không phải nhập lại mã PIN hay mã xác thực: trang chỉ hiện mã QR để đăng nhập lại cho bot, quét xong là vào bảng điều khiển. Trình duyệt chưa được ghi nhớ vẫn đi đủ ba bước.
 - Nếu mở trang ra ngoài máy này, hãy đặt sau HTTPS.
 
 ## Link bị chặn thêm
