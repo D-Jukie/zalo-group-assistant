@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import useSWR, { useSWRConfig } from "swr";
 import { errorText, fetcher, send } from "@/lib/api";
 import { cn, formatAge, formatDate, formatNumber } from "@/lib/format";
-import type { BlockedMember, Group, GroupMember, MemberActionResult, MemberPage } from "@/lib/types";
+import type { BlockedMember, Group, GroupMember, MemberActionResult, MemberAddition, MemberPage } from "@/lib/types";
 import { ConfirmDialog } from "./confirm-dialog";
 import { BulkFailures, RowCheckbox, RowNumber, SelectAllCheckbox, SelectionBar, useSelection } from "./selection";
 import { useToast } from "./toast";
@@ -26,11 +26,14 @@ const sorts = [
 type Sort = (typeof sorts)[number]["value"];
 
 // What can be done to the ticked members.
-type MemberAction = "kick" | "block" | "clear";
+type MemberAction = "kick" | "block" | "clear" | "promote" | "demote" | "transfer";
 
 const actionWords: Record<MemberAction, { title: string; confirm: string; done: string; body: string }> = {
   kick: { title: "Xóa khỏi nhóm", confirm: "Xóa khỏi nhóm", done: "Đã xóa khỏi nhóm", body: "Các thành viên đã chọn sẽ bị xóa khỏi nhóm trên Zalo. Họ vẫn có thể vào lại nếu được mời hoặc có link nhóm." },
   block: { title: "Xóa và chặn", confirm: "Xóa và chặn", done: "Đã xóa và chặn", body: "Các thành viên đã chọn sẽ bị xóa khỏi nhóm và không vào lại được, cho tới khi được bỏ chặn ở danh sách bên dưới." },
+  promote: { title: "Đặt làm phó nhóm", confirm: "Đặt làm phó nhóm", done: "Đã đặt làm phó nhóm", body: "Các thành viên đã chọn sẽ thành phó nhóm: họ duyệt và xóa được thành viên, và đổi được cài đặt của nhóm trên Zalo." },
+  demote: { title: "Gỡ phó nhóm", confirm: "Gỡ phó nhóm", done: "Đã gỡ phó nhóm", body: "Các thành viên đã chọn sẽ trở lại là thành viên thường. Họ vẫn ở trong nhóm." },
+  transfer: { title: "Chuyển quyền trưởng nhóm", confirm: "Chuyển quyền trưởng nhóm", done: "Đã chuyển quyền trưởng nhóm cho", body: "Thành viên đã chọn sẽ thành trưởng nhóm, còn tài khoản bot trở thành thành viên thường: bot sẽ không xóa tin, kick hay đổi cài đặt nhóm được nữa cho tới khi được đặt làm phó nhóm. Việc này không hoàn tác được từ đây; chỉ trưởng nhóm mới chuyển lại được." },
   clear: { title: "Xóa vi phạm", confirm: "Xóa vi phạm", done: "Đã xóa vi phạm của", body: "Số lần vi phạm và các tin đã lưu của các thành viên đã chọn sẽ bị xóa và không khôi phục được. Họ vẫn ở trong nhóm." },
 };
 
@@ -252,12 +255,21 @@ export function GroupMembers({ group }: { group: Group }) {
         </div>
       ) : null}
     </Card>
+    <AddMembers group={group} onAdded={() => void mutate()} />
     <BlockedMembers group={group} />
     <SelectionBar count={selection.count} noun="thành viên" onClear={selection.clear}>
       {group.botIsAdmin ? (
         <>
           <Button variant="danger" disabled={actionPending} onClick={() => setConfirming("kick")}>Xóa khỏi nhóm</Button>
           <Button variant="danger" disabled={actionPending} onClick={() => setConfirming("block")}>Xóa và chặn</Button>
+        </>
+      ) : null}
+      {/* Deputies are the owner's to name; so is handing the group over, to one member at a time. */}
+      {data?.botRole === "owner" ? (
+        <>
+          {selection.items.some((member) => member.role === "member") ? <Button disabled={actionPending} onClick={() => setConfirming("promote")}>Đặt làm phó nhóm</Button> : null}
+          {selection.items.some((member) => member.role === "admin") ? <Button disabled={actionPending} onClick={() => setConfirming("demote")}>Gỡ phó nhóm</Button> : null}
+          {selection.count === 1 ? <Button disabled={actionPending} onClick={() => setConfirming("transfer")}>Chuyển trưởng nhóm</Button> : null}
         </>
       ) : null}
       <Button disabled={actionPending} onClick={() => setConfirming("clear")}>Xóa vi phạm</Button>
@@ -273,6 +285,77 @@ export function GroupMembers({ group }: { group: Group }) {
       {confirming === undefined ? null : actionWords[confirming].body}
     </ConfirmDialog>
     </div>
+  );
+}
+
+const maxPhonesPerAdd = 30;
+
+// Adds members from a pasted list of phone numbers, a class list for instance. The bot looks each
+// number up on Zalo and answers with what happened to every one of them.
+function AddMembers({ group, onAdded }: { group: Group; onAdded: () => void }) {
+  const toast = useToast();
+  const [text, setText] = useState("");
+  const [pending, setPending] = useState(false);
+  const [outcome, setOutcome] = useState<{ results: MemberAddition[]; invalid: string[] }>();
+  const count = text.split(/[\n,;]+/u).filter((piece) => piece.trim() !== "").length;
+
+  async function add() {
+    setPending(true);
+    setOutcome(undefined);
+    try {
+      const response = await send<{ results: MemberAddition[]; invalid: string[] }>("POST", `/groups/${encodeURIComponent(group.groupId)}/members/add`, { phones: text });
+      setOutcome(response);
+      const added = response.results.filter((item) => item.ok);
+      // What went in is taken out of the box; what did not stays there to be corrected.
+      setText([...response.results.filter((item) => !item.ok).map((item) => item.phone), ...response.invalid].join("\n"));
+      if (added.length === response.results.length && response.invalid.length === 0) toast.success(`Đã thêm ${formatNumber(added.length)} thành viên`);
+      else toast.error(`Đã thêm ${formatNumber(added.length)}/${formatNumber(response.results.length + response.invalid.length)} số`);
+      if (added.length > 0) onAdded();
+    } catch (exception) {
+      toast.error(errorText(exception));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  const failed = outcome?.results.filter((item) => !item.ok) ?? [];
+  const added = outcome?.results.filter((item) => item.ok) ?? [];
+  return (
+    <Card>
+      <CardHeader title="Thêm thành viên bằng số điện thoại" description={`Dán danh sách số điện thoại, mỗi dòng một số; tối đa ${maxPhonesPerAdd} số mỗi lần. Bot tìm tài khoản Zalo của từng số rồi thêm vào nhóm.`} />
+      <div className="space-y-3 px-5 py-4">
+        <label htmlFor="add-member-phones" className="sr-only">Danh sách số điện thoại</label>
+        <textarea
+          id="add-member-phones"
+          rows={4}
+          autoComplete="off"
+          spellCheck={false}
+          inputMode="tel"
+          placeholder={"0912345678\n0987654321…"}
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          className="w-full min-w-0 resize-y rounded-md border border-border-strong bg-surface px-3 py-2 font-mono text-sm placeholder:text-subtle"
+        />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="min-w-0 flex-1 basis-56 text-sm text-muted">
+            {count > maxPhonesPerAdd ? <span className="text-danger">Đang có {formatNumber(count)} số; hãy thêm tối đa {maxPhonesPerAdd} số mỗi lần.</span> : "Chỉ tìm được những tài khoản cho phép tìm bằng số điện thoại. Thêm nhiều người liên tục có thể bị Zalo coi là spam, nên hãy thêm từng đợt."}
+          </p>
+          <Button variant="primary" pending={pending} disabled={count === 0 || count > maxPhonesPerAdd} onClick={add}>Thêm vào nhóm</Button>
+        </div>
+        {pending ? <p role="status" className="text-sm text-muted">Đang tìm từng số trên Zalo, việc này mất vài giây cho mỗi chục số…</p> : null}
+        {outcome === undefined ? null : (
+          <div role="status" className="space-y-2 rounded-md border border-border bg-background px-3 py-2.5 text-sm">
+            {added.length > 0 ? <p><span className="font-medium text-success">Đã thêm {formatNumber(added.length)}:</span> {added.map((item) => item.name || item.phone).join(", ")}</p> : null}
+            {failed.length > 0 || outcome.invalid.length > 0 ? (
+              <ul className="space-y-1">
+                {failed.map((item) => <li key={item.phone}><span className="font-mono">{item.phone}</span>{item.name ? ` (${item.name})` : ""}: <span className="text-danger">{item.error}</span></li>)}
+                {outcome.invalid.map((entry) => <li key={entry}><span className="font-mono">{entry}</span>: <span className="text-danger">Không phải số điện thoại hợp lệ</span></li>)}
+              </ul>
+            ) : null}
+          </div>
+        )}
+      </div>
+    </Card>
   );
 }
 

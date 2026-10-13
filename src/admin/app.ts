@@ -16,6 +16,7 @@ import { maxSpamWindowSeconds } from "../moderation/spam-detector.js";
 import { isRecord, now } from "../utils.js";
 import { groupFilters, searchGroups, summarizeGroups, type GroupFilter } from "./group-search.js";
 import { memberSorts, searchMembers } from "./member-search.js";
+import { maskPhone, maxPhonesPerAdd, parsePhoneList } from "./phone-list.js";
 import { authMiddleware } from "./session.js";
 
 // URL segment of each per-group switch.
@@ -40,7 +41,7 @@ const maxSearchLength = 100;
 // How many rows one bulk action may cover.
 const maxBulkItems = 200;
 const groupBulkActions = ["enable", "disable", "leave"] as const;
-const memberBulkActions = ["kick", "block", "clear"] as const;
+const memberBulkActions = ["kick", "block", "clear", "promote", "demote", "transfer"] as const;
 
 // A list of distinct, non-empty strings no longer than a bulk action allows; undefined for anything else.
 function parseIdList(value: unknown): string[] | undefined {
@@ -537,7 +538,9 @@ export function createAdminApp(bot: SimpleBot, store: Store, blockedLinks: Block
         page: Number.isInteger(page) && page >= 1 ? page : 1,
         pageSize: isIntegerBetween(pageSize, 1, maxGroupPageSize) ? pageSize : defaultGroupPageSize,
       });
-      response.json({ ...found, memberCount: rows.length, complete });
+      // What the bot is in this group decides which actions the table offers.
+      const botRole = group?.creatorId === bot.ownId ? "owner" : group?.botIsAdmin === true ? "admin" : "member";
+      response.json({ ...found, memberCount: rows.length, complete, botRole });
     } catch (error: unknown) {
       response.status(502).json({ error: `Không lấy được danh sách thành viên từ Zalo: ${errorMessage(error)}` });
     }
@@ -564,6 +567,23 @@ export function createAdminApp(bot: SimpleBot, store: Store, blockedLinks: Block
       }
       // Read before the removal: afterwards the members are no longer in the list.
       const names = await memberNames(groupId);
+      if (action === "promote" || action === "demote") {
+        const results = await bot.setDeputies(groupId, userIds, action === "promote");
+        for (const result of results) logAdmin("moderation", action === "promote" ? "Đặt làm phó nhóm" : "Gỡ phó nhóm", { groupId, userId: result.userId, userName: names.get(result.userId) ?? "", ...outcome(result) });
+        response.json({ results });
+        return;
+      }
+      if (action === "transfer") {
+        const [userId] = userIds;
+        if (userId === undefined || userIds.length !== 1) {
+          response.status(400).json({ error: "Hãy chọn đúng một thành viên để chuyển quyền trưởng nhóm" });
+          return;
+        }
+        await bot.transferOwnership(groupId, userId);
+        logAdmin("moderation", "Chuyển quyền trưởng nhóm", { groupId, userId, userName: names.get(userId) ?? "" });
+        response.json({ results: [{ userId, ok: true }] });
+        return;
+      }
       const results = await bot.removeMembers(groupId, userIds, action === "block");
       for (const result of results) {
         logAdmin("moderation", action === "block" ? "Mời ra khỏi nhóm và chặn" : "Mời ra khỏi nhóm", { groupId, userId: result.userId, userName: names.get(result.userId) ?? "", ...(result.warning === undefined ? {} : { detail: result.warning }), ...outcome(result) });
@@ -571,6 +591,33 @@ export function createAdminApp(bot: SimpleBot, store: Store, blockedLinks: Block
       response.json({ results });
     } catch (error: unknown) {
       response.status(409).json({ error: errorMessage(error) });
+    }
+  });
+  // Adds the accounts behind a pasted list of phone numbers to the group. The answer says what
+  // happened to each number, and lists what was not a phone number at all.
+  app.post("/api/groups/:groupId/members/add", async (request, response) => {
+    const { groupId } = request.params;
+    const body: unknown = request.body;
+    const text = isRecord(body) && typeof body.phones === "string" ? body.phones : undefined;
+    if (text === undefined || text.length > 4000) {
+      response.status(400).json({ error: "Danh sách số điện thoại không hợp lệ" });
+      return;
+    }
+    const { phones, invalid } = parsePhoneList(text);
+    if (phones.length === 0) {
+      response.status(400).json({ error: "Hãy nhập ít nhất một số điện thoại hợp lệ" });
+      return;
+    }
+    if (phones.length > maxPhonesPerAdd) {
+      response.status(400).json({ error: `Mỗi lần thêm tối đa ${maxPhonesPerAdd} số điện thoại` });
+      return;
+    }
+    try {
+      const results = await bot.addMembersByPhone(groupId, phones);
+      for (const result of results) logAdmin("moderation", "Thêm vào nhóm bằng số điện thoại", { groupId, ...(result.userId === undefined ? {} : { userId: result.userId }), userName: result.name ?? "", detail: maskPhone(result.phone), ...outcome(result) });
+      response.json({ results, invalid });
+    } catch (error: unknown) {
+      response.status(502).json({ error: errorMessage(error) });
     }
   });
   app.get("/api/groups/:groupId/blocked-members", async (request, response) => {

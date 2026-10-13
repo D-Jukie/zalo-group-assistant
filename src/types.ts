@@ -188,6 +188,9 @@ export type GroupMember = MemberProfile & Readonly<{
 // not be blocked from coming back.
 export type MemberRemoval = Readonly<{ userId: string; ok: boolean; error?: string; warning?: string }>;
 
+// What adding one phone number to a group came to. The name is known once the account was found.
+export type MemberAddition = Readonly<{ phone: string; ok: boolean; userId?: string; name?: string; error?: string }>;
+
 // Someone a group has blocked from joining again.
 export type BlockedMember = Readonly<{ userId: string; name: string; avatar: string }>;
 

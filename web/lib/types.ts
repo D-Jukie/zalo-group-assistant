@@ -186,10 +186,13 @@ export type GroupMember = {
 
 // One page of a group's members, already searched and sorted by the bot. `complete` is false when
 // Zalo only handed over part of a large group's member list.
-export type MemberPage = { items: GroupMember[]; total: number; page: number; pageSize: number; memberCount: number; complete: boolean };
+export type MemberPage = { items: GroupMember[]; total: number; page: number; pageSize: number; memberCount: number; complete: boolean; botRole: "owner" | "admin" | "member" };
 
 // What a bulk action did to one member. `warning` is set when they were removed but not blocked.
 export type MemberActionResult = { userId: string; ok: boolean; error?: string; warning?: string };
+
+// What adding one phone number to a group came to.
+export type MemberAddition = { phone: string; ok: boolean; userId?: string; name?: string; error?: string };
 
 // Someone a group has blocked from joining again.
 export type BlockedMember = { userId: string; name: string; avatar: string };

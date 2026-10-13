@@ -84,6 +84,13 @@ Tab `Thành viên` của trang `/group/<id>` có bảng `Danh sách thành viên
 
 Hai thao tác đầu chỉ có khi bot là trưởng hoặc phó nhóm. Bot và trưởng nhóm không tick được; phó nhóm chỉ bị xóa được khi bot là trưởng nhóm. Thao tác nào cũng hỏi lại trước khi làm, và thành viên nào không xử lý được sẽ được liệt kê kèm lý do. Thành viên bị xóa bằng tay ở đây không tính vào số `Đã kick`, vốn chỉ đếm những lần bot tự kick theo quy tắc.
 
+Khi bot là **trưởng nhóm**, thanh thao tác có thêm:
+
+- `Đặt làm phó nhóm` và `Gỡ phó nhóm` cho các thành viên đã tick.
+- `Chuyển trưởng nhóm`, khi tick đúng một thành viên. Sau đó tài khoản bot là thành viên thường của nhóm (không xóa tin, kick hay đổi cài đặt nhóm được nữa cho tới khi được đặt làm phó nhóm), và chỉ trưởng nhóm mới chuyển lại được.
+
+**Thêm thành viên bằng số điện thoại.** Thẻ ngay dưới bảng nhận một danh sách số điện thoại dán vào, mỗi dòng một số (chấp nhận `0912345678`, `+84 912 345 678`, `0912.345.678`), tối đa 30 số mỗi lần. Bot tìm tài khoản Zalo của từng số, cách nhau 0,4 giây, rồi thêm những tài khoản tìm được vào nhóm, và báo kết quả của từng số: đã thêm, đã ở trong nhóm, không tìm thấy (kể cả tài khoản không cho tìm bằng số điện thoại), hoặc bị Zalo từ chối. Những số chưa thêm được ở lại trong ô để sửa. Thêm nhiều người liên tục có thể bị Zalo coi là spam, nên hãy thêm từng đợt. Lịch sử hoạt động chỉ ghi số điện thoại đã che phần giữa (`0912***678`).
+
 ### Tìm trong nhật ký vi phạm
 
 Trang `/violations` tìm và lọc ngay trên bot, nên kết quả tính trên toàn bộ nhật ký chứ không chỉ những tin đã tải về:

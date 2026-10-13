@@ -2,7 +2,7 @@ import { ThreadType, type API, type GroupEvent, type Message } from "zca-js";
 import { noActivity, type ActivityRecorder } from "../activity/activity-log.js";
 import { writeLog } from "../logger.js";
 import type { Store } from "../storage/store.js";
-import type { AdminGroupView, BlockedMember, BotStatus, LiveGroupInfo, MemberProfile, MemberRemoval, StoredGroup } from "../types.js";
+import type { AdminGroupView, BlockedMember, BotStatus, LiveGroupInfo, MemberAddition, MemberProfile, MemberRemoval, StoredGroup } from "../types.js";
 import { isRecord, now } from "../utils.js";
 import { Enforcer } from "./enforcer.js";
 import type { BotFeature } from "./feature.js";
@@ -21,6 +21,8 @@ const profileBatchSize = 100;
 // Zalo lists a group's blocked accounts a page at a time.
 const blockedPageSize = 50;
 const maxBlockedPages = 20;
+// A pause between two look-ups of a phone number, so a list is not fired at Zalo all at once.
+const phoneLookupDelayMs = 400;
 
 export class SimpleBot {
   private readonly groupCache = new Map<string, Readonly<{ info: LiveGroupInfo; expiresAt: number }>>();
@@ -157,6 +159,77 @@ export class SimpleBot {
       const reason = refusal(userId) ?? (rejected.has(userId) ? "Zalo từ chối xóa thành viên này" : undefined);
       if (reason !== undefined) return { userId, ok: false, error: reason };
       return { userId, ok: true, ...(warning === undefined ? {} : { warning }) };
+    });
+  }
+
+  // Makes members deputies of the group, or ordinary members again. Only the group's owner can.
+  // Members it makes no sense for are answered with the reason and the rest still go.
+  public async setDeputies(groupId: string, userIds: readonly string[], deputy: boolean): Promise<MemberRemoval[]> {
+    const info = await this.syncGroup(groupId);
+    if (info.creatorId !== this.ownId) throw new Error(`Chỉ trưởng nhóm mới ${deputy ? "đặt" : "gỡ"} được phó nhóm; bot không phải trưởng nhóm của nhóm này`);
+    const refusal = (userId: string): string | undefined => {
+      if (userId === this.ownId) return "Bot đang là trưởng nhóm";
+      const isDeputy = info.adminIds.includes(userId);
+      if (deputy && isDeputy) return "Đã là phó nhóm";
+      if (!deputy && !isDeputy) return "Không phải phó nhóm";
+      return undefined;
+    };
+    const allowed = userIds.filter((userId) => refusal(userId) === undefined);
+    if (allowed.length > 0) {
+      if (deputy) await this.api.addGroupDeputy(allowed, groupId);
+      else await this.api.removeGroupDeputy(allowed, groupId);
+      this.groupCache.delete(groupId);
+    }
+    return userIds.map((userId): MemberRemoval => {
+      const reason = refusal(userId);
+      return reason === undefined ? { userId, ok: true } : { userId, ok: false, error: reason };
+    });
+  }
+
+  // Hands the group over to another member. The bot is an ordinary member of it afterwards, and
+  // only the new owner can undo this.
+  public async transferOwnership(groupId: string, userId: string): Promise<void> {
+    const info = await this.syncGroup(groupId);
+    if (info.creatorId !== this.ownId) throw new Error("Chỉ trưởng nhóm mới chuyển được quyền trưởng nhóm; bot không phải trưởng nhóm của nhóm này");
+    if (userId === this.ownId) throw new Error("Bot đang là trưởng nhóm");
+    await this.api.changeGroupOwner(userId, groupId);
+    this.groupCache.delete(groupId);
+  }
+
+  // Adds the accounts behind some phone numbers to a group. Each number is looked up by itself, with
+  // a pause in between; the accounts found are then added in one request. The answer says, number by
+  // number, who was added and why the others were not.
+  public async addMembersByPhone(groupId: string, phones: readonly string[]): Promise<MemberAddition[]> {
+    await this.syncGroup(groupId);
+    const present = new Set((await this.listMembers(groupId, true)).members.map((member) => member.userId));
+    const found = new Map<string, Readonly<{ userId: string; name: string }>>();
+    const problems = new Map<string, string>();
+    for (const [index, phone] of phones.entries()) {
+      if (index > 0) await new Promise((resolve) => setTimeout(resolve, phoneLookupDelayMs));
+      try {
+        const user = await this.api.findUser(phone);
+        const account = { userId: user.uid, name: user.display_name || user.zalo_name };
+        found.set(phone, account);
+        if (present.has(account.userId)) problems.set(phone, "Đã ở trong nhóm");
+        else if (Array.from(found.entries()).some(([other, item]) => other !== phone && item.userId === account.userId)) problems.set(phone, "Trùng tài khoản với một số khác trong danh sách");
+      } catch {
+        problems.set(phone, "Không tìm thấy tài khoản Zalo, hoặc tài khoản không cho tìm bằng số điện thoại");
+      }
+    }
+    const adding = phones.filter((phone) => !problems.has(phone)).map((phone) => found.get(phone)?.userId).filter((userId): userId is string => userId !== undefined);
+    if (adding.length > 0) {
+      const rejected = new Set((await this.api.addUserToGroup(adding, groupId)).errorMembers);
+      for (const phone of phones) {
+        const account = found.get(phone);
+        if (account !== undefined && !problems.has(phone) && rejected.has(account.userId)) problems.set(phone, "Zalo từ chối thêm tài khoản này; họ có thể đã chặn việc được thêm vào nhóm");
+      }
+      this.groupCache.delete(groupId);
+      this.memberCache.delete(groupId);
+    }
+    return phones.map((phone): MemberAddition => {
+      const account = found.get(phone);
+      const error = problems.get(phone);
+      return { phone, ok: error === undefined, ...(account === undefined ? {} : account), ...(error === undefined ? {} : { error }) };
     });
   }
 
