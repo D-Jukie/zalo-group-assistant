@@ -8,7 +8,9 @@ import useSWR from "swr";
 import { errorText, send } from "@/lib/api";
 import { cn, formatDateTime, formatNumber } from "@/lib/format";
 import { usePreferences, usePreferencesReady } from "@/lib/preferences";
-import type { Group, GroupPage } from "@/lib/types";
+import type { BotStatus, Group, GroupActionResult, GroupPage } from "@/lib/types";
+import { ConfirmDialog } from "./confirm-dialog";
+import { BulkFailures, RowCheckbox, RowNumber, SelectAllCheckbox, SelectionBar, useSelection } from "./selection";
 import { useToast } from "./toast";
 import { Badge, Button, Card, CompactSwitch, EmptyState, Input, PageHeader, Skeleton } from "./ui";
 
@@ -37,6 +39,14 @@ function RuleBadges({ group }: { group: Group }) {
   );
 }
 
+type BulkAction = "enable" | "disable" | "leave";
+
+const bulkDone: Record<BulkAction, string> = { enable: "Đã bật bot ở", disable: "Đã tắt bot ở", leave: "Đã rời" };
+
+function groupIdOf(group: Group): string {
+  return group.groupId;
+}
+
 // The search text, filter and page live in the URL, so a view can be bookmarked, shared and restored with Back.
 // The bot does the searching, filtering and paging; this page only ever holds the rows it shows.
 export function GroupsView() {
@@ -48,6 +58,12 @@ export function GroupsView() {
   const preferencesReady = usePreferencesReady();
   const [syncing, setSyncing] = useState(false);
   const toast = useToast();
+  // Ticked groups stay ticked across pages and searches, until an action is done or they are cleared.
+  const selection = useSelection<Group>(groupIdOf);
+  const [bulkPending, setBulkPending] = useState<BulkAction>();
+  const [failures, setFailures] = useState<{ name: string; error: string }[]>([]);
+  const [confirmingLeave, setConfirmingLeave] = useState(false);
+  const { data: status } = useSWR<BotStatus>("/status");
 
   const query = searchParams.get("q") ?? "";
   const filter = filters.find((item) => item.value === searchParams.get("filter"))?.value ?? "all";
@@ -124,6 +140,31 @@ export function GroupsView() {
     }
   }
 
+  // One action for every ticked group. The bot answers with what happened in each of them.
+  async function runBulk(action: BulkAction, groups: readonly Group[]) {
+    setBulkPending(action);
+    setFailures([]);
+    try {
+      const response = await send<{ results: GroupActionResult[] }>("POST", "/groups/bulk", { action, groupIds: groups.map(groupIdOf) });
+      const failed = response.results.filter((item) => !item.ok);
+      const done = response.results.length - failed.length;
+      setFailures(failed.map((item) => ({ name: item.groupName || item.groupId, error: item.error ?? "Không rõ lý do" })));
+      if (failed.length === 0) toast.success(`${bulkDone[action]} ${formatNumber(done)} nhóm`);
+      else toast.error(`${bulkDone[action]} ${formatNumber(done)}/${formatNumber(response.results.length)} nhóm`);
+      selection.clear();
+      await mutate();
+    } catch (exception) {
+      toast.error(errorText(exception));
+    } finally {
+      setBulkPending(undefined);
+      setConfirmingLeave(false);
+    }
+  }
+
+  // The owner of a group cannot leave it until ownership has been handed to someone else in Zalo.
+  const owned = status === undefined ? [] : selection.items.filter((group) => group.creatorId === status.userId);
+  const leavable = selection.items.filter((group) => !owned.includes(group));
+
   async function syncFromZalo() {
     setSyncing(true);
     try {
@@ -189,6 +230,7 @@ export function GroupsView() {
         </div>
       </div>
 
+      <BulkFailures title="Một số nhóm chưa xử lý được" failures={failures} onDismiss={() => setFailures([])} />
       <Card>
         {data === undefined ? (
           <div className="space-y-3 p-5">
@@ -202,9 +244,11 @@ export function GroupsView() {
         ) : (
           <div className="overflow-x-auto">
             {/* Fixed column widths and row heights: the table keeps its shape whatever the names, badges or page. */}
-            <table className="w-full min-w-[64rem] table-fixed text-sm">
+            <table className="w-full min-w-[72rem] table-fixed text-sm">
               <caption className="sr-only">Danh sách nhóm</caption>
               <colgroup>
+                <col className="w-12" />
+                <col className="w-14" />
                 <col />
                 <col className="w-28" />
                 <col className="w-28" />
@@ -214,6 +258,8 @@ export function GroupsView() {
               </colgroup>
               <thead>
                 <tr className="h-11 border-b border-border text-left text-muted">
+                  <th scope="col" className="pl-5"><SelectAllCheckbox items={rows} selection={selection} getId={groupIdOf} label="Chọn mọi nhóm của trang này" /></th>
+                  <th scope="col" className="px-2 text-right font-medium">STT</th>
                   <th scope="col" className="px-5 font-medium">Nhóm</th>
                   <th scope="col" className="px-5 text-right font-medium">Thành viên</th>
                   <th scope="col" className="px-5 font-medium">Trạng thái</th>
@@ -223,8 +269,10 @@ export function GroupsView() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((group) => (
-                  <tr key={group.groupId} className={cn(rowClass, "transition-colors hover:bg-surface-hover")}>
+                {rows.map((group, index) => (
+                  <tr key={group.groupId} className={cn(rowClass, "transition-colors hover:bg-surface-hover", selection.has(group.groupId) && "bg-surface-hover")}>
+                    <td className="pl-5"><RowCheckbox checked={selection.has(group.groupId)} onChange={(checked) => selection.toggle(group, checked)} label={`Chọn nhóm ${group.name || group.groupId}`} /></td>
+                    <td className="px-2 text-right"><RowNumber value={(page - 1) * pageSize + index + 1} /></td>
                     <th scope="row" className="px-5 text-left font-medium">
                       {/* A long name is cut with an ellipsis; the full name shows on hover. */}
                       <Link href={`/group/${encodeURIComponent(group.groupId)}`} title={group.name || group.groupId} className="block truncate underline-offset-4 hover:underline">
@@ -242,7 +290,7 @@ export function GroupsView() {
                 ))}
                 {/* A short last page is padded with empty rows so the pager below stays where it was. */}
                 {pageCount > 1 ? Array.from({ length: pageSize - rows.length }, (_item, index) => (
-                  <tr key={`filler-${index}`} aria-hidden="true" className={rowClass}><td colSpan={6} /></tr>
+                  <tr key={`filler-${index}`} aria-hidden="true" className={rowClass}><td colSpan={8} /></tr>
                 )) : null}
               </tbody>
             </table>
@@ -260,6 +308,29 @@ export function GroupsView() {
           </div>
         ) : null}
       </Card>
+      <SelectionBar count={selection.count} noun="nhóm" onClear={selection.clear}>
+        <Button pending={bulkPending === "enable"} disabled={bulkPending !== undefined} onClick={() => runBulk("enable", selection.items)}>Bật bot</Button>
+        <Button pending={bulkPending === "disable"} disabled={bulkPending !== undefined} onClick={() => runBulk("disable", selection.items)}>Tắt bot</Button>
+        <Button variant="danger" disabled={bulkPending !== undefined} onClick={() => setConfirmingLeave(true)}>Rời nhóm</Button>
+      </SelectionBar>
+      <ConfirmDialog
+        open={confirmingLeave}
+        title={leavable.length > 0 ? `Rời ${formatNumber(leavable.length)} nhóm?` : "Không rời được nhóm nào"}
+        confirmLabel={leavable.length > 0 ? "Rời nhóm" : "Đã hiểu"}
+        pending={bulkPending === "leave"}
+        onConfirm={() => {
+          if (leavable.length > 0) void runBulk("leave", leavable);
+          else setConfirmingLeave(false);
+        }}
+        onCancel={() => setConfirmingLeave(false)}
+      >
+        {leavable.length > 0 ? <p>Tài khoản bot sẽ rời khỏi các nhóm này trên Zalo. Muốn vào lại phải được mời hoặc duyệt lại; cài đặt của nhóm vẫn được giữ, còn tin nhắn đang chờ gửi vào nhóm sẽ bị hủy.</p> : null}
+        {owned.length > 0 ? (
+          <p className={leavable.length > 0 ? "mt-2" : undefined}>
+            Bot đang là trưởng nhóm của {formatNumber(owned.length)} nhóm đã chọn ({owned.slice(0, 3).map((group) => group.name || group.groupId).join(", ")}{owned.length > 3 ? "…" : ""}) nên {leavable.length > 0 ? "các nhóm đó được bỏ qua" : "chưa rời được"}. Hãy chuyển quyền trưởng nhóm cho người khác trên Zalo trước.
+          </p>
+        ) : null}
+      </ConfirmDialog>
     </>
   );
 }

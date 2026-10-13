@@ -10,6 +10,7 @@ import { formatDateTime, formatKickRule, formatNumber, splitWindow, windowUnits 
 import { ruleLabels, totalViolations, violationRules, type Group, type GroupToggle, type KickRule, type MemberViolations, type RateRule, type SpamSettings, type ViolationMessage, type ViolationRule } from "@/lib/types";
 import { ConfirmDialog } from "./confirm-dialog";
 import { ListManager } from "./list-manager";
+import { RowCheckbox, RowNumber, SelectAllCheckbox, SelectionBar, useSelection } from "./selection";
 import { useToast } from "./toast";
 import { Badge, Button, Card, CardHeader, EmptyState, Input, PageHeader, Skeleton, Switch } from "./ui";
 import { ViolationItem } from "./violation-item";
@@ -307,7 +308,12 @@ function MemberMessages({ groupId, member, onClose }: { groupId: string; member:
   );
 }
 
-type PendingClear = { userId?: string; label: string };
+// What is about to be cleared: one member, several ticked members, or with neither the whole group.
+type PendingClear = { userId?: string; userIds?: string[]; label: string };
+
+function memberIdOf(member: MemberViolations): string {
+  return member.userId;
+}
 
 function Statistics({ group }: { group: Group }) {
   const router = useRouter();
@@ -318,6 +324,7 @@ function Statistics({ group }: { group: Group }) {
   const { data: members, error, mutate } = useSWR<MemberViolations[]>(path);
   const [pendingClear, setPendingClear] = useState<PendingClear>();
   const [clearing, setClearing] = useState(false);
+  const selection = useSelection<MemberViolations>(memberIdOf);
   const toast = useToast();
   const selectedId = searchParams.get("member");
   const selected = members?.find((member) => member.userId === selectedId);
@@ -335,9 +342,12 @@ function Statistics({ group }: { group: Group }) {
     if (pendingClear === undefined) return;
     setClearing(true);
     try {
-      await mutate(send<MemberViolations[]>("DELETE", path, pendingClear.userId === undefined ? {} : { userId: pendingClear.userId }), { revalidate: false });
+      const scope = pendingClear.userIds !== undefined ? { userIds: pendingClear.userIds } : pendingClear.userId === undefined ? {} : { userId: pendingClear.userId };
+      await mutate(send<MemberViolations[]>("DELETE", path, scope), { revalidate: false });
+      selection.clear();
       await mutateGlobal("/overview");
-      if (pendingClear.userId === undefined || pendingClear.userId === selectedId) selectMember(undefined);
+      const cleared = pendingClear.userIds ?? (pendingClear.userId === undefined ? undefined : [pendingClear.userId]);
+      if (cleared === undefined || (selectedId !== null && cleared.includes(selectedId))) selectMember(undefined);
       toast.success(`Đã xóa thống kê của ${pendingClear.label}`);
     } catch (exception) {
       toast.error(errorText(exception));
@@ -365,6 +375,8 @@ function Statistics({ group }: { group: Group }) {
               <caption className="sr-only">Vi phạm theo thành viên</caption>
               <thead>
                 <tr className="border-b border-border text-left text-muted">
+                  <th scope="col" className="w-10 py-3 pl-5"><SelectAllCheckbox items={members} selection={selection} getId={memberIdOf} label="Chọn mọi thành viên" /></th>
+                  <th scope="col" className="w-12 px-2 py-3 text-right font-medium">STT</th>
                   <th scope="col" className="px-5 py-3 font-medium">Thành viên</th>
                   {violationRules.map((rule) => <th key={rule} scope="col" className="px-5 py-3 text-right font-medium">{ruleLabels[rule]}</th>)}
                   <th scope="col" className="px-5 py-3 text-right font-medium">Tổng</th>
@@ -374,8 +386,10 @@ function Statistics({ group }: { group: Group }) {
                 </tr>
               </thead>
               <tbody>
-                {members.map((member) => (
-                  <tr key={member.userId} className="border-b border-border last:border-0" aria-selected={member.userId === selectedId}>
+                {members.map((member, index) => (
+                  <tr key={member.userId} className={`border-b border-border last:border-0 ${selection.has(member.userId) ? "bg-surface-hover" : ""}`} aria-selected={member.userId === selectedId}>
+                    <td className="py-3 pl-5"><RowCheckbox checked={selection.has(member.userId)} onChange={(checked) => selection.toggle(member, checked)} label={`Chọn ${member.userName || member.userId}`} /></td>
+                    <td className="px-2 py-3 text-right"><RowNumber value={index + 1} /></td>
                     <th scope="row" className="max-w-56 px-5 py-3 text-left font-normal">
                       <span className="block truncate font-medium" translate="no">{member.userName || "Không rõ tên"}</span>
                       <span className="block truncate font-mono text-xs text-muted" translate="no">{member.userId}</span>
@@ -397,6 +411,9 @@ function Statistics({ group }: { group: Group }) {
           </div>
         )}
       </Card>
+      <SelectionBar count={selection.count} noun="thành viên" onClear={selection.clear}>
+        <Button variant="danger" onClick={() => setPendingClear({ userIds: selection.items.map(memberIdOf), label: `${formatNumber(selection.count)} thành viên đã chọn` })}>Xóa thống kê</Button>
+      </SelectionBar>
       <MemberMessages groupId={group.groupId} member={selected} onClose={() => selectMember(undefined)} />
       <ConfirmDialog
         open={pendingClear !== undefined}

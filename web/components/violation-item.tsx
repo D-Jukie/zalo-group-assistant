@@ -11,11 +11,13 @@ const statusLabels: Record<ViolationMessageStatus, { label: string; tone: "succe
 };
 
 // One logged message: who sent it, which rules it broke, what happened to it and what it said.
-export function ViolationItem({ message, context }: { message: ViolationMessage; context?: ReactNode }) {
+// `number`, when given, is the entry's place in the list it is shown in.
+export function ViolationItem({ message, context, number }: { message: ViolationMessage; context?: ReactNode; number?: number }) {
   const status = statusLabels[message.status];
   return (
     <li className="px-5 py-4">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+        {number === undefined ? null : <span className="w-7 shrink-0 tabular-nums text-muted">{number}.</span>}
         <span className="min-w-0 truncate font-medium" translate="no">{message.userName || message.userId}</span>
         {context}
         <time dateTime={new Date(message.at).toISOString()} title={formatDateTime(message.at)} className="text-muted">{formatRelative(message.at)}</time>

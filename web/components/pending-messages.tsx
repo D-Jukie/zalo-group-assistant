@@ -5,13 +5,18 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import useSWR, { useSWRConfig } from "swr";
 import { errorText, send } from "@/lib/api";
-import { formatFriendlyDateTime } from "@/lib/format";
+import { formatFriendlyDateTime, formatNumber } from "@/lib/format";
 import { reminderRepeatLabels, type PendingReminderMessage, type ReminderList } from "@/lib/types";
 import { ConfirmDialog } from "./confirm-dialog";
 import { dataUrlPayload, MessageEditor, pickedPictureView, type PickedImage, type PictureView } from "./reminder-message-field";
+import { RowCheckbox, RowNumber, SelectAllCheckbox, SelectionBar, useSelection } from "./selection";
 import { useToast } from "./toast";
 import { Badge, Button, Card, EmptyState, Skeleton } from "./ui";
 import { GroupLink } from "./violation-item";
+
+function messageId(message: PendingReminderMessage): string {
+  return message.id;
+}
 
 function imageUrl(message: PendingReminderMessage, index: number): string {
   // The version makes the browser fetch the picture again after the message was changed.
@@ -102,6 +107,9 @@ export function PendingMessages() {
   const [removing, setRemoving] = useState<PendingReminderMessage>();
   const [removePending, setRemovePending] = useState(false);
   const toast = useToast();
+  const selection = useSelection<PendingReminderMessage>(messageId);
+  const [confirmingBulk, setConfirmingBulk] = useState(false);
+  const [bulkPending, setBulkPending] = useState(false);
   // The dates are worded relative to now, which only the browser knows.
   const [now, setNow] = useState<number>();
   useEffect(() => setNow(Date.now()), [messages]);
@@ -130,6 +138,22 @@ export function PendingMessages() {
     }
   }
 
+  async function removeSelected(chosen: readonly PendingReminderMessage[]) {
+    setBulkPending(true);
+    try {
+      const { deleted } = await send<{ deleted: number }>("POST", "/reminder-messages/delete", { ids: chosen.map(messageId) });
+      selection.clear();
+      await mutate();
+      void mutateGlobal("/reminders");
+      toast.success(`Đã hủy ${formatNumber(deleted)} tin nhắn chờ gửi`);
+    } catch (exception) {
+      toast.error(errorText(exception));
+    } finally {
+      setBulkPending(false);
+      setConfirmingBulk(false);
+    }
+  }
+
   if (messages === undefined) {
     return (
       <Card>
@@ -147,8 +171,18 @@ export function PendingMessages() {
           <EmptyState title="Không có tin nhắn nào đang chờ gửi" description="Hẹn giờ một tin ở tab Soạn tin, hoặc bật “Gửi tin nhắn khi đến giờ nhắc” khi tạo nhắc hẹn." action={<Link href="/broadcast" className="text-sm font-medium underline underline-offset-4">Soạn tin</Link>} />
         ) : (
           <ul className="divide-y divide-border">
-            {messages.map((message) => (
-              <li key={message.id} className="flex flex-wrap items-start gap-x-4 gap-y-3 px-5 py-4">
+            <li className="px-5 py-2.5">
+              <label className="inline-flex cursor-pointer items-center gap-3 text-sm text-muted">
+                <SelectAllCheckbox items={messages} selection={selection} getId={messageId} label="Chọn mọi tin nhắn chờ gửi" />
+                Chọn tất cả
+              </label>
+            </li>
+            {messages.map((message, index) => (
+              <li key={message.id} className={`flex flex-wrap items-start gap-x-4 gap-y-3 px-5 py-4 ${selection.has(message.id) ? "bg-surface-hover" : ""}`}>
+                <span className="flex shrink-0 items-center gap-3 pt-5">
+                  <RowCheckbox checked={selection.has(message.id)} onChange={(checked) => selection.toggle(message, checked)} label={`Chọn tin nhắn gửi ${message.groupName || message.groupId}`} />
+                  <RowNumber value={index + 1} className="w-6 text-right text-sm" />
+                </span>
                 {message.imageCount > 0 ? (
                   <span className="relative shrink-0">
                     <img src={imageUrl(message, 0)} alt={`Ảnh gửi kèm, ${message.imageCount} ảnh`} width={56} height={56} loading="lazy" className="size-14 rounded-md border border-border object-cover" />
@@ -177,6 +211,19 @@ export function PendingMessages() {
           </ul>
         )}
       </Card>
+      <SelectionBar count={selection.count} noun="tin nhắn" onClear={selection.clear}>
+        <Button variant="danger" disabled={bulkPending} onClick={() => setConfirmingBulk(true)}>Hủy tin nhắn</Button>
+      </SelectionBar>
+      <ConfirmDialog
+        open={confirmingBulk}
+        title={`Hủy ${formatNumber(selection.count)} tin nhắn?`}
+        confirmLabel="Hủy tin nhắn"
+        pending={bulkPending}
+        onConfirm={() => void removeSelected(selection.items)}
+        onCancel={() => setConfirmingBulk(false)}
+      >
+        Bot sẽ không gửi các tin nhắn đã chọn nữa. Nhắc hẹn trên Zalo vẫn giữ nguyên.
+      </ConfirmDialog>
       {/* Mounted per message, so the dialog always opens with that message's own text and picture. */}
       {editing !== undefined ? <EditDialog key={editing.id} message={editing} onClose={() => setEditing(undefined)} onSaved={() => mutate()} /> : null}
       <ConfirmDialog

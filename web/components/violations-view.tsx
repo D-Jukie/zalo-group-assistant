@@ -66,10 +66,11 @@ export function ViolationsView() {
           />
         ) : (
           <ul className="divide-y divide-border">
-            {messages.map((message) => (
+            {messages.map((message, index) => (
               <ViolationItem
                 key={`${message.groupId}-${message.messageId}`}
                 message={message}
+                number={index + 1}
                 context={<><span aria-hidden="true" className="text-subtle">·</span><GroupLink groupId={message.groupId} name={message.groupName} /><span aria-hidden="true" className="text-subtle">·</span></>}
               />
             ))}

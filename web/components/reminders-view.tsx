@@ -3,13 +3,14 @@
 import { ChevronDown, Download, MessageSquare, Plus, RefreshCw, Repeat } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { errorText, fetcher, send } from "@/lib/api";
 import { downloadExcel, slug } from "@/lib/excel";
 import { cn, formatClock, formatDateTime, formatFullDay, formatNumber, localDayKey } from "@/lib/format";
 import { reminderRepeatLabels, type GroupReminder, type ReminderList, type ReminderMember, type ReminderResponses } from "@/lib/types";
 import { ConfirmDialog } from "./confirm-dialog";
+import { BulkFailures, RowCheckbox, RowNumber, SelectAllCheckbox, SelectionBar, useSelection } from "./selection";
 import { useToast } from "./toast";
 import { Badge, Button, Card, EmptyState, PageHeader, Skeleton, StatTile } from "./ui";
 import { GroupLink } from "./violation-item";
@@ -90,14 +91,22 @@ function Responses({ reminder }: { reminder: GroupReminder }) {
   );
 }
 
-// One reminder: when it goes off, what it says, where, and how members answered.
-function ReminderItem({ reminder, onRemove }: { reminder: GroupReminder; onRemove: (reminder: GroupReminder) => void }) {
+function reminderKey(reminder: GroupReminder): string {
+  return `${reminder.groupId}:${reminder.reminderId}`;
+}
+
+// One reminder: its number in the list, when it goes off, what it says, where, and how members answered.
+function ReminderItem({ reminder, number, selected, onSelect, onRemove }: { reminder: GroupReminder; number: number; selected: boolean; onSelect: (selected: boolean) => void; onRemove: (reminder: GroupReminder) => void }) {
   const [open, setOpen] = useState(false);
   const panelId = `responses-${reminder.groupId}-${reminder.reminderId}`;
   const shownTime = reminder.nextTime ?? reminder.startTime;
   return (
-    <li className="px-5 py-4">
+    <li className={cn("px-5 py-4", selected && "bg-surface-hover")}>
       <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
+        <span className="flex shrink-0 items-center gap-3 pt-1.5">
+          <RowCheckbox checked={selected} onChange={onSelect} label={`Chọn nhắc hẹn ${reminder.title} ở ${reminder.groupName || reminder.groupId}`} />
+          <RowNumber value={number} className="w-6 text-right text-sm" />
+        </span>
         <time dateTime={new Date(shownTime).toISOString()} className="w-14 shrink-0 pt-0.5 text-lg font-semibold tabular-nums">{formatClock(shownTime)}</time>
         <div className="min-w-0 flex-1 basis-64">
           <p className="whitespace-pre-wrap break-words text-sm font-medium">
@@ -122,7 +131,7 @@ function ReminderItem({ reminder, onRemove }: { reminder: GroupReminder; onRemov
           <Button variant="ghost" aria-label={`Xóa nhắc hẹn ${reminder.title}`} onClick={() => onRemove(reminder)}>Xóa</Button>
         </div>
       </div>
-      {open ? <div id={panelId} className="mt-4 rounded-md border border-border bg-background p-4 md:ml-[4.5rem]"><Responses reminder={reminder} /></div> : null}
+      {open ? <div id={panelId} className="mt-4 rounded-md border border-border bg-background p-4 md:ml-[8.5rem]"><Responses reminder={reminder} /></div> : null}
     </li>
   );
 }
@@ -139,6 +148,13 @@ export function RemindersView() {
   const toast = useToast();
   const [removing, setRemoving] = useState<GroupReminder>();
   const [removePending, setRemovePending] = useState(false);
+  const selection = useSelection<GroupReminder>(reminderKey);
+  const [bulkPending, setBulkPending] = useState<"delete" | "export">();
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [failures, setFailures] = useState<{ name: string; error: string }[]>([]);
+  // Ticks belong to the half on show; switching to the other one starts afresh.
+  const clearSelection = selection.clear;
+  useEffect(() => clearSelection(), [view, clearSelection]);
 
   // The bot remembers each group's reminders for a few minutes; this reads every group again.
   async function refresh() {
@@ -167,19 +183,71 @@ export function RemindersView() {
     }
   }
 
+  // Removes every ticked reminder from its group. The bot answers with what happened to each.
+  async function removeSelected(reminders: readonly GroupReminder[]) {
+    setBulkPending("delete");
+    setFailures([]);
+    try {
+      const response = await send<{ results: { groupId: string; reminderId: string; ok: boolean; error?: string }[] }>("POST", "/reminders/delete", { items: reminders.map((item) => ({ groupId: item.groupId, reminderId: item.reminderId })) });
+      const failed = response.results.filter((item) => !item.ok);
+      setFailures(failed.map((item) => {
+        const reminder = reminders.find((candidate) => candidate.groupId === item.groupId && candidate.reminderId === item.reminderId);
+        return { name: `${reminder?.title || item.reminderId} · ${reminder?.groupName || item.groupId}`, error: item.error ?? "Không rõ lý do" };
+      }));
+      const done = response.results.length - failed.length;
+      if (failed.length === 0) toast.success(`Đã xóa ${formatNumber(done)} nhắc hẹn`);
+      else toast.error(`Đã xóa ${formatNumber(done)}/${formatNumber(response.results.length)} nhắc hẹn`);
+      selection.clear();
+      await mutate();
+    } catch (exception) {
+      toast.error(errorText(exception));
+    } finally {
+      setBulkPending(undefined);
+      setConfirmingDelete(false);
+    }
+  }
+
+  // One Excel file with who answered each ticked reminder. The answers are asked for a few reminders
+  // at a time; a reminder nobody has answered needs no request and still gets a row of its own.
+  async function exportSelected(reminders: readonly GroupReminder[]) {
+    setBulkPending("export");
+    try {
+      const rows: string[][] = [];
+      const batchSize = 4;
+      const nobody: ReminderResponses = { accepted: [], rejected: [] };
+      for (let start = 0; start < reminders.length; start += batchSize) {
+        const batch = reminders.slice(start, start + batchSize);
+        const answers = await Promise.all(batch.map((item) => item.accepted + item.rejected === 0
+          ? nobody
+          : fetcher<ReminderResponses>(`/groups/${encodeURIComponent(item.groupId)}/reminders/${encodeURIComponent(item.reminderId)}/responses`)));
+        batch.forEach((item, index) => {
+          const answered = exportRows(item, answers[index] ?? nobody);
+          rows.push(...(answered.length > 0 ? answered : [[item.groupName || item.groupId, item.groupId, item.title, formatDateTime(item.nextTime ?? item.startTime), reminderRepeatLabels[item.repeat], "", "", "Chưa có phản hồi"]]));
+        });
+      }
+      await downloadExcel(`nhac-hen-${formatNumber(reminders.length)}-muc-${localDayKey(Date.now())}.xlsx`, exportHeader, rows);
+      toast.success(`Đã xuất phản hồi của ${formatNumber(reminders.length)} nhắc hẹn`);
+    } catch (exception) {
+      toast.error(errorText(exception));
+    } finally {
+      setBulkPending(undefined);
+    }
+  }
+
   const all = data?.items ?? [];
   const upcoming = all.filter((item) => item.nextTime !== null);
   const past = all.filter((item) => item.nextTime === null);
   const shown = view === "upcoming" ? upcoming : past;
   // The bot already sorted them, so reminders of one day sit next to each other.
-  const days: { key: string; time: number; items: GroupReminder[] }[] = [];
-  for (const item of shown) {
+  // The numbers run on through the days, so a reminder's number is its place in the whole list.
+  const days: { key: string; time: number; firstNumber: number; items: GroupReminder[] }[] = [];
+  shown.forEach((item, index) => {
     const time = item.nextTime ?? item.startTime;
     const key = localDayKey(time);
     const last = days.at(-1);
     if (last !== undefined && last.key === key) last.items.push(item);
-    else days.push({ key, time, items: [item] });
-  }
+    else days.push({ key, time, firstNumber: index + 1, items: [item] });
+  });
   const pending = <Skeleton className="h-9 w-16" />;
   const groupsWithReminders = new Set(all.map((item) => item.groupId)).size;
 
@@ -229,6 +297,13 @@ export function RemindersView() {
           </button>
         ))}
       </div>
+      {shown.length > 0 ? (
+        <label className="mb-4 ml-4 inline-flex cursor-pointer items-center gap-2 align-middle text-sm text-muted">
+          <SelectAllCheckbox items={shown} selection={selection} getId={reminderKey} label="Chọn mọi nhắc hẹn đang hiện" />
+          Chọn tất cả
+        </label>
+      ) : null}
+      <BulkFailures title="Một số nhắc hẹn chưa xóa được" failures={failures} onDismiss={() => setFailures([])} />
       {data === undefined ? (
         <Card>
           <div className="space-y-3 p-5">
@@ -261,13 +336,32 @@ export function RemindersView() {
               </h2>
               <Card>
                 <ul className="divide-y divide-border">
-                  {day.items.map((item) => <ReminderItem key={`${item.groupId}-${item.reminderId}`} reminder={item} onRemove={setRemoving} />)}
+                  {day.items.map((item, index) => (
+                    <ReminderItem key={reminderKey(item)} reminder={item} number={day.firstNumber + index} selected={selection.has(reminderKey(item))} onSelect={(selected) => selection.toggle(item, selected)} onRemove={setRemoving} />
+                  ))}
                 </ul>
               </Card>
             </section>
           ))}
         </div>
       )}
+      <SelectionBar count={selection.count} noun="nhắc hẹn" onClear={selection.clear}>
+        <Button pending={bulkPending === "export"} disabled={bulkPending !== undefined} onClick={() => exportSelected(selection.items)}>
+          {bulkPending === "export" ? null : <Download aria-hidden="true" className="size-4" />}
+          Xuất Excel
+        </Button>
+        <Button variant="danger" disabled={bulkPending !== undefined} onClick={() => setConfirmingDelete(true)}>Xóa</Button>
+      </SelectionBar>
+      <ConfirmDialog
+        open={confirmingDelete}
+        title={`Xóa ${formatNumber(selection.count)} nhắc hẹn?`}
+        confirmLabel="Xóa nhắc hẹn"
+        pending={bulkPending === "delete"}
+        onConfirm={() => void removeSelected(selection.items)}
+        onCancel={() => setConfirmingDelete(false)}
+      >
+        Các nhắc hẹn đã chọn sẽ bị xóa khỏi nhóm của chúng trên Zalo, kèm tin nhắn chờ gửi của chúng nếu có. Không hoàn tác được.
+      </ConfirmDialog>
       <ConfirmDialog
         open={removing !== undefined}
         title="Xóa nhắc hẹn này?"

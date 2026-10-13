@@ -22,6 +22,8 @@ export type KickRule = RateRule;
 export type Group = {
   groupId: string;
   name: string;
+  // The group's owner (trưởng nhóm).
+  creatorId: string;
   memberCount: number;
   // Master switch: while it is off the bot ignores the group completely.
   botEnabled: boolean;
@@ -144,6 +146,9 @@ export type PendingReminderMessage = {
   repeat: ReminderRepeat;
   updatedAt: number;
 };
+
+// What a bulk action did to one group.
+export type GroupActionResult = { groupId: string; groupName: string; ok: boolean; error?: string };
 
 // `warning` is set when the reminder was created but one of its messages could not be sent or scheduled.
 export type ReminderCreateResult = { groupId: string; groupName: string; ok: boolean; error?: string; warning?: string };
