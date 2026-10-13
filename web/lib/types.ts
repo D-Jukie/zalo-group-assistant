@@ -165,6 +165,12 @@ export type GroupMember = {
 // Zalo only handed over part of a large group's member list.
 export type MemberPage = { items: GroupMember[]; total: number; page: number; pageSize: number; memberCount: number; complete: boolean };
 
+// What a bulk action did to one member. `warning` is set when they were removed but not blocked.
+export type MemberActionResult = { userId: string; ok: boolean; error?: string; warning?: string };
+
+// Someone a group has blocked from joining again.
+export type BlockedMember = { userId: string; name: string; avatar: string };
+
 // What a bulk action did to one group.
 export type GroupActionResult = { groupId: string; groupName: string; ok: boolean; error?: string };
 

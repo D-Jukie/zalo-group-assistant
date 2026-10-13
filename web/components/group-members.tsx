@@ -3,11 +3,12 @@
 import { RefreshCw, Search } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import useSWR from "swr";
-import { errorText, fetcher } from "@/lib/api";
+import useSWR, { useSWRConfig } from "swr";
+import { errorText, fetcher, send } from "@/lib/api";
 import { cn, formatAge, formatDate, formatNumber } from "@/lib/format";
-import type { Group, GroupMember, MemberPage } from "@/lib/types";
-import { RowNumber } from "./selection";
+import type { BlockedMember, Group, GroupMember, MemberActionResult, MemberPage } from "@/lib/types";
+import { ConfirmDialog } from "./confirm-dialog";
+import { BulkFailures, RowCheckbox, RowNumber, SelectAllCheckbox, SelectionBar, useSelection } from "./selection";
 import { useToast } from "./toast";
 import { Badge, Button, Card, CardHeader, EmptyState, Input, Skeleton } from "./ui";
 
@@ -24,8 +25,26 @@ const sorts = [
 
 type Sort = (typeof sorts)[number]["value"];
 
+// What can be done to the ticked members.
+type MemberAction = "kick" | "block" | "clear";
+
+const actionWords: Record<MemberAction, { title: string; confirm: string; done: string; body: string }> = {
+  kick: { title: "Xóa khỏi nhóm", confirm: "Xóa khỏi nhóm", done: "Đã xóa khỏi nhóm", body: "Các thành viên đã chọn sẽ bị xóa khỏi nhóm trên Zalo. Họ vẫn có thể vào lại nếu được mời hoặc có link nhóm." },
+  block: { title: "Xóa và chặn", confirm: "Xóa và chặn", done: "Đã xóa và chặn", body: "Các thành viên đã chọn sẽ bị xóa khỏi nhóm và không vào lại được, cho tới khi được bỏ chặn ở danh sách bên dưới." },
+  clear: { title: "Xóa vi phạm", confirm: "Xóa vi phạm", done: "Đã xóa vi phạm của", body: "Số lần vi phạm và các tin đã lưu của các thành viên đã chọn sẽ bị xóa và không khôi phục được. Họ vẫn ở trong nhóm." },
+};
+
+function memberIdOf(member: GroupMember): string {
+  return member.userId;
+}
+
+// The bot itself and the group's owner cannot be removed, so they cannot be ticked either.
+function selectable(member: GroupMember): boolean {
+  return !member.isBot && member.role !== "owner";
+}
+
 // The picture of a member, or their initial when they have none or it fails to load.
-function Avatar({ member }: { member: GroupMember }) {
+function Avatar({ member }: { member: Pick<GroupMember, "name" | "avatar"> }) {
   const [failed, setFailed] = useState(false);
   if (member.avatar === "" || failed) {
     return <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-full bg-surface-hover text-sm font-medium text-muted">{(member.name || "?").trim().charAt(0).toUpperCase()}</span>;
@@ -43,6 +62,12 @@ export function GroupMembers({ group }: { group: Group }) {
   const [page, setPage] = useState(1);
   const [refreshing, setRefreshing] = useState(false);
   const toast = useToast();
+  const { mutate: mutateGlobal } = useSWRConfig();
+  // Ticked members stay ticked across pages and searches, until an action is done or they are cleared.
+  const selection = useSelection<GroupMember>(memberIdOf);
+  const [confirming, setConfirming] = useState<MemberAction>();
+  const [actionPending, setActionPending] = useState(false);
+  const [failures, setFailures] = useState<{ name: string; error: string }[]>([]);
   // The ages are counted from now, which only the browser knows.
   const [now, setNow] = useState<number>();
   useEffect(() => setNow(Date.now()), []);
@@ -75,12 +100,44 @@ export function GroupMembers({ group }: { group: Group }) {
     }
   }
 
+  // One action for every ticked member. The bot answers with what happened to each of them.
+  async function run(action: MemberAction, members: readonly GroupMember[]) {
+    setActionPending(true);
+    setFailures([]);
+    try {
+      const response = await send<{ results: MemberActionResult[] }>("POST", `${base}/bulk`, { action, userIds: members.map(memberIdOf) });
+      const nameOf = (userId: string) => members.find((member) => member.userId === userId)?.name || userId;
+      const failed = response.results.filter((item) => !item.ok);
+      const warned = response.results.filter((item) => item.ok && item.warning !== undefined);
+      setFailures([
+        ...failed.map((item) => ({ name: nameOf(item.userId), error: item.error ?? "Không rõ lý do" })),
+        ...warned.map((item) => ({ name: nameOf(item.userId), error: item.warning ?? "" })),
+      ]);
+      const done = response.results.length - failed.length;
+      const summary = `${actionWords[action].done} ${formatNumber(done)}${failed.length > 0 ? `/${formatNumber(response.results.length)}` : ""} thành viên`;
+      if (failed.length === 0 && warned.length === 0) toast.success(summary);
+      else toast.error(summary);
+      selection.clear();
+      await mutate();
+      // The group's figures, its statistics and its blocked list all follow from what was just done.
+      void mutateGlobal((key) => typeof key === "string" && key.startsWith(`/groups/${encodeURIComponent(group.groupId)}`) && !key.startsWith(base));
+    } catch (exception) {
+      toast.error(errorText(exception));
+    } finally {
+      setActionPending(false);
+      setConfirming(undefined);
+    }
+  }
+
   const rows = data?.items ?? [];
+  const tickable = rows.filter(selectable);
   const total = data?.total ?? 0;
   const shownPage = data?.page ?? 1;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
 
   return (
+    <div className="space-y-4">
+    <BulkFailures title="Một số thành viên chưa xử lý được" failures={failures} onDismiss={() => setFailures([])} />
     <Card>
       <CardHeader
         title="Danh sách thành viên"
@@ -124,9 +181,10 @@ export function GroupMembers({ group }: { group: Group }) {
         <div className="border-t border-border"><EmptyState title={query === "" ? "Chưa đọc được thành viên nào" : "Không có thành viên nào khớp"} description={query === "" ? "Bấm “Làm mới” để đọc lại từ Zalo." : "Thử tên khác hoặc một phần ID."} /></div>
       ) : (
         <div className="overflow-x-auto border-t border-border">
-          <table className="w-full min-w-[52rem] table-fixed text-sm">
+          <table className="w-full min-w-[56rem] table-fixed text-sm">
             <caption className="sr-only">Thành viên của nhóm</caption>
             <colgroup>
+              <col className="w-12" />
               <col className="w-14" />
               <col />
               <col className="w-52" />
@@ -135,7 +193,8 @@ export function GroupMembers({ group }: { group: Group }) {
             </colgroup>
             <thead>
               <tr className="h-11 border-b border-border text-left text-muted">
-                <th scope="col" className="pl-5 pr-2 text-right font-medium">STT</th>
+                <th scope="col" className="pl-5"><SelectAllCheckbox items={tickable} selection={selection} getId={memberIdOf} label="Chọn mọi thành viên của trang này" /></th>
+                <th scope="col" className="px-2 text-right font-medium">STT</th>
                 <th scope="col" className="px-5 font-medium">Thành viên</th>
                 <th scope="col" className="px-5 font-medium">ID</th>
                 <th scope="col" className="px-5 font-medium">Ngày tham gia Zalo</th>
@@ -144,8 +203,9 @@ export function GroupMembers({ group }: { group: Group }) {
             </thead>
             <tbody>
               {rows.map((member, index) => (
-                <tr key={member.userId} className={rowClass}>
-                  <td className="pl-5 pr-2 text-right"><RowNumber value={(shownPage - 1) * pageSize + index + 1} /></td>
+                <tr key={member.userId} className={cn(rowClass, selection.has(member.userId) && "bg-surface-hover")}>
+                  <td className="pl-5">{selectable(member) ? <RowCheckbox checked={selection.has(member.userId)} onChange={(checked) => selection.toggle(member, checked)} label={`Chọn ${member.name || member.userId}`} /> : null}</td>
+                  <td className="px-2 text-right"><RowNumber value={(shownPage - 1) * pageSize + index + 1} /></td>
                   <th scope="row" className="px-5 text-left font-normal">
                     <span className="flex min-w-0 items-center gap-3">
                       <Avatar member={member} />
@@ -176,7 +236,7 @@ export function GroupMembers({ group }: { group: Group }) {
               ))}
               {/* A short last page is padded with empty rows so the pager below stays where it was. */}
               {pageCount > 1 ? Array.from({ length: pageSize - rows.length }, (_item, index) => (
-                <tr key={`filler-${index}`} aria-hidden="true" className={rowClass}><td colSpan={5} /></tr>
+                <tr key={`filler-${index}`} aria-hidden="true" className={rowClass}><td colSpan={6} /></tr>
               )) : null}
             </tbody>
           </table>
@@ -191,6 +251,68 @@ export function GroupMembers({ group }: { group: Group }) {
           </div>
         </div>
       ) : null}
+    </Card>
+    <BlockedMembers group={group} />
+    <SelectionBar count={selection.count} noun="thành viên" onClear={selection.clear}>
+      {group.botIsAdmin ? (
+        <>
+          <Button variant="danger" disabled={actionPending} onClick={() => setConfirming("kick")}>Xóa khỏi nhóm</Button>
+          <Button variant="danger" disabled={actionPending} onClick={() => setConfirming("block")}>Xóa và chặn</Button>
+        </>
+      ) : null}
+      <Button disabled={actionPending} onClick={() => setConfirming("clear")}>Xóa vi phạm</Button>
+    </SelectionBar>
+    <ConfirmDialog
+      open={confirming !== undefined}
+      title={confirming === undefined ? "" : `${actionWords[confirming].title}: ${formatNumber(selection.count)} thành viên?`}
+      confirmLabel={confirming === undefined ? "" : actionWords[confirming].confirm}
+      pending={actionPending}
+      onConfirm={() => { if (confirming !== undefined) void run(confirming, selection.items); }}
+      onCancel={() => setConfirming(undefined)}
+    >
+      {confirming === undefined ? null : actionWords[confirming].body}
+    </ConfirmDialog>
+    </div>
+  );
+}
+
+// The accounts this group has blocked from joining again, with a way to let them back in.
+// It only shows once the group has blocked someone.
+function BlockedMembers({ group }: { group: Group }) {
+  const path = `/groups/${encodeURIComponent(group.groupId)}/blocked-members`;
+  const { data: blocked, mutate } = useSWR<BlockedMember[]>(group.botIsAdmin ? path : null);
+  const [unblocking, setUnblocking] = useState<string>();
+  const toast = useToast();
+
+  async function unblock(member: BlockedMember) {
+    setUnblocking(member.userId);
+    try {
+      await mutate(send<BlockedMember[]>("POST", `${path}/remove`, { userIds: [member.userId] }), { revalidate: false });
+      toast.success(`Đã bỏ chặn ${member.name || member.userId}`);
+    } catch (exception) {
+      toast.error(errorText(exception));
+    } finally {
+      setUnblocking(undefined);
+    }
+  }
+
+  if (blocked === undefined || blocked.length === 0) return null;
+  return (
+    <Card>
+      <CardHeader title="Tài khoản bị chặn" description="Những tài khoản này không vào lại nhóm được cho tới khi được bỏ chặn." action={<Badge>{formatNumber(blocked.length)} tài khoản</Badge>} />
+      <ul className="max-h-80 divide-y divide-border overflow-y-auto overscroll-contain">
+        {blocked.map((member, index) => (
+          <li key={member.userId} className="flex items-center gap-3 px-5 py-2.5">
+            <RowNumber value={index + 1} className="w-6 shrink-0 text-right text-sm" />
+            <Avatar member={member} />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium" translate="no">{member.name || "Không rõ tên"}</span>
+              <span className="block truncate font-mono text-xs text-muted" translate="no">{member.userId}</span>
+            </span>
+            <Button variant="ghost" pending={unblocking === member.userId} onClick={() => unblock(member)}>Bỏ chặn</Button>
+          </li>
+        ))}
+      </ul>
     </Card>
   );
 }
