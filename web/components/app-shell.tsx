@@ -9,6 +9,7 @@ import { fetcher, send } from "@/lib/api";
 import { cn } from "@/lib/format";
 import { usePreferences } from "@/lib/preferences";
 import type { BotStatus } from "@/lib/types";
+import { ToastProvider } from "./toast";
 
 type NavigationItem = { href: string; label: string; icon: LucideIcon; match: readonly string[] };
 
@@ -73,6 +74,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     // One refresh interval for every page, taken from the tool settings.
     <SWRConfig value={{ fetcher, revalidateOnFocus: true, shouldRetryOnError: false, refreshInterval: refreshSeconds * 1000 }}>
+      <ToastProvider>
       <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-50 focus:rounded-md focus:bg-surface focus:px-3 focus:py-2 focus:text-sm">
         Bỏ qua điều hướng
       </a>
@@ -115,6 +117,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="mx-auto w-full max-w-7xl px-4 py-6 md:px-8 md:py-8">{children}</div>
         </main>
       </div>
+      </ToastProvider>
     </SWRConfig>
   );
 }

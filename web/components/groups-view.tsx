@@ -9,7 +9,8 @@ import { errorText, send } from "@/lib/api";
 import { cn, formatDateTime, formatNumber } from "@/lib/format";
 import { usePreferences, usePreferencesReady } from "@/lib/preferences";
 import type { Group, GroupPage } from "@/lib/types";
-import { Badge, Button, Card, CompactSwitch, EmptyState, ErrorNote, Input, PageHeader, Skeleton } from "./ui";
+import { useToast } from "./toast";
+import { Badge, Button, Card, CompactSwitch, EmptyState, Input, PageHeader, Skeleton } from "./ui";
 
 const searchDebounceMs = 250;
 
@@ -46,7 +47,7 @@ export function GroupsView() {
   const { pageSize } = usePreferences();
   const preferencesReady = usePreferencesReady();
   const [syncing, setSyncing] = useState(false);
-  const [syncError, setSyncError] = useState<string>();
+  const toast = useToast();
 
   const query = searchParams.get("q") ?? "";
   const filter = filters.find((item) => item.value === searchParams.get("filter"))?.value ?? "all";
@@ -103,7 +104,6 @@ export function GroupsView() {
   // Switches the bot on or off for one group right from the list. The row updates at once and
   // falls back to the saved state if the bot refuses the change.
   async function setBotEnabled(group: Group, enabled: boolean) {
-    setSyncError(undefined);
     const withBot = (current: GroupPage): GroupPage => ({ ...current, items: current.items.map((item) => item.groupId === group.groupId ? { ...item, botEnabled: enabled } : item) });
     try {
       await mutate(
@@ -118,19 +118,20 @@ export function GroupsView() {
           revalidate: true,
         },
       );
+      toast.success(`Đã ${enabled ? "bật" : "tắt"} bot ở “${group.name || group.groupId}”`);
     } catch (exception) {
-      setSyncError(errorText(exception));
+      toast.error(errorText(exception));
     }
   }
 
   async function syncFromZalo() {
-    setSyncError(undefined);
     setSyncing(true);
     try {
       await send("POST", "/groups/sync");
       await mutate();
+      toast.success("Đã đồng bộ danh sách nhóm từ Zalo");
     } catch (exception) {
-      setSyncError(errorText(exception));
+      toast.error(errorText(exception));
     } finally {
       setSyncing(false);
     }
@@ -154,7 +155,6 @@ export function GroupsView() {
           </Button>
         }
       />
-      <ErrorNote message={syncError} />
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <div className="relative min-w-56 flex-1">
           <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-subtle" />

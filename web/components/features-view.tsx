@@ -7,7 +7,8 @@ import { errorText, send } from "@/lib/api";
 import { cn } from "@/lib/format";
 import type { GroupSummary } from "@/lib/types";
 import { ListManager } from "./list-manager";
-import { Badge, Button, Card, CardHeader, ErrorNote, Input, PageHeader } from "./ui";
+import { useToast } from "./toast";
+import { Badge, Button, Card, CardHeader, Input, PageHeader } from "./ui";
 
 const tabs = [
   { value: "links", label: "Chặn link" },
@@ -26,17 +27,16 @@ function useGroupCount(feature: "linkGuard" | "badWordFilter" | "spamGuard"): st
 function SentenceCheck() {
   const [result, setResult] = useState<{ match: string | null }>();
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string>();
+  const toast = useToast();
 
   async function check(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const text = String(new FormData(event.currentTarget).get("text") ?? "");
-    setError(undefined);
     setPending(true);
     try {
       setResult(await send<{ match: string | null }>("POST", "/banned-words/check", { text }));
     } catch (exception) {
-      setError(errorText(exception));
+      toast.error(errorText(exception));
     } finally {
       setPending(false);
     }
@@ -51,7 +51,6 @@ function SentenceCheck() {
           <Input id="check-text" name="text" autoComplete="off" maxLength={500} placeholder="Nhập một câu…" required />
           <Button type="submit" pending={pending}>Kiểm tra</Button>
         </form>
-        <ErrorNote message={error} />
         <p role="status" aria-live="polite" className="mt-3 text-sm">
           {result === undefined ? <span className="text-muted">Kết quả hiện ở đây.</span> : result.match === null ? (
             <Badge tone="success">Không vi phạm</Badge>

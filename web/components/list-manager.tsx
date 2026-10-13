@@ -3,7 +3,8 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import useSWR from "swr";
 import { errorText, send } from "@/lib/api";
-import { Badge, Button, Card, CardHeader, EmptyState, ErrorNote, Input, Skeleton } from "./ui";
+import { useToast } from "./toast";
+import { Badge, Button, Card, CardHeader, EmptyState, Input, Skeleton } from "./ui";
 
 // A list of strings the admin maintains (blocked links, banned words): add with the form, remove per item.
 export function ListManager({ title, description, path, field, inputLabel, placeholder, maxLength, emptyTitle, emptyDescription, notice }: {
@@ -21,32 +22,32 @@ export function ListManager({ title, description, path, field, inputLabel, place
   const { data: items, error: loadError, mutate } = useSWR<string[]>(path);
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<string>();
-  const [error, setError] = useState<string>();
+  const toast = useToast();
   const inputId = `${field}-input`;
 
   async function add(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
     const value = String(new FormData(form).get(field) ?? "");
-    setError(undefined);
     setAdding(true);
     try {
       await mutate(send<string[]>("POST", path, { [field]: value }), { revalidate: false });
       form.reset();
+      toast.success(`Đã thêm “${value.trim()}”`);
     } catch (exception) {
-      setError(errorText(exception));
+      toast.error(errorText(exception));
     } finally {
       setAdding(false);
     }
   }
 
   async function remove(item: string) {
-    setError(undefined);
     setRemoving(item);
     try {
       await mutate(send<string[]>("DELETE", path, { [field]: item }), { revalidate: false });
+      toast.success(`Đã xóa “${item}”`);
     } catch (exception) {
-      setError(errorText(exception));
+      toast.error(errorText(exception));
     } finally {
       setRemoving(undefined);
     }
@@ -61,7 +62,6 @@ export function ListManager({ title, description, path, field, inputLabel, place
           <Input id={inputId} name={field} autoComplete="off" spellCheck={false} maxLength={maxLength} placeholder={placeholder} required />
           <Button type="submit" variant="primary" pending={adding}>Thêm</Button>
         </form>
-        <ErrorNote message={error} />
         {items && notice ? notice(items) : null}
       </div>
       {items === undefined ? (

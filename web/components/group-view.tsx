@@ -10,26 +10,29 @@ import { formatDateTime, formatKickRule, formatNumber, splitWindow, windowUnits 
 import { ruleLabels, totalViolations, violationRules, type Group, type GroupToggle, type KickRule, type MemberViolations, type RateRule, type SpamSettings, type ViolationMessage, type ViolationRule } from "@/lib/types";
 import { ConfirmDialog } from "./confirm-dialog";
 import { ListManager } from "./list-manager";
-import { Badge, Button, Card, CardHeader, EmptyState, ErrorNote, Input, PageHeader, Skeleton, Switch } from "./ui";
+import { useToast } from "./toast";
+import { Badge, Button, Card, CardHeader, EmptyState, Input, PageHeader, Skeleton, Switch } from "./ui";
 import { ViolationItem } from "./violation-item";
 
-// Saves one of the group's switches and hands back the updated group, or an error message to show.
+const toggleNames: Record<GroupToggle, string> = { bot: "bot ở nhóm này", links: "chặn link", "bad-words": "lọc từ cấm", spam: "chống spam" };
+
+// Saves one of the group's switches, hands back the updated group and says what happened.
 function useToggle(group: Group, onChange: (group: Group) => void) {
-  const [error, setError] = useState<string>();
+  const toast = useToast();
   async function toggle(name: GroupToggle, enabled: boolean) {
-    setError(undefined);
     try {
       onChange(await send<Group>("PATCH", `/groups/${encodeURIComponent(group.groupId)}/${name}`, { enabled }));
+      toast.success(`Đã ${enabled ? "bật" : "tắt"} ${toggleNames[name]}`);
     } catch (exception) {
-      setError(errorText(exception));
+      toast.error(errorText(exception));
     }
   }
-  return { toggle, error };
+  return { toggle };
 }
 
 // The master switch. While it is off the bot ignores the group entirely, so everything below is inactive.
 function BotSwitch({ group, onChange }: { group: Group; onChange: (group: Group) => void }) {
-  const { toggle, error } = useToggle(group, onChange);
+  const { toggle } = useToggle(group, onChange);
   return (
     <Card className="px-5">
       <Switch
@@ -38,7 +41,6 @@ function BotSwitch({ group, onChange }: { group: Group; onChange: (group: Group)
         label="Bật bot ở nhóm này"
         description={group.botEnabled ? "Bot đang theo dõi tin nhắn của nhóm theo các tính năng bên dưới." : "Bot đang bỏ qua hoàn toàn nhóm này: không kiểm tra, không ghi nhận, không xóa tin, không kick."}
       />
-      {error ? <div className="pb-3"><ErrorNote message={error} /></div> : null}
     </Card>
   );
 }
@@ -51,18 +53,18 @@ function KickSetting({ group, rule, featureOn, onSaved }: { group: Group; rule: 
   const [amount, setAmount] = useState(String(initial.amount));
   const [unitSeconds, setUnitSeconds] = useState(initial.unitSeconds);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string>();
+  const toast = useToast();
   const active = kickRule.enabled && group.botIsAdmin;
   const dirty = count !== String(kickRule.count) || Number(amount) * unitSeconds !== kickRule.windowSeconds;
   const fieldId = `kick-${rule}`;
 
   async function save(next: KickRule) {
-    setError(undefined);
     setPending(true);
     try {
       onSaved(await send<Group>("PATCH", `/groups/${encodeURIComponent(group.groupId)}/kick-rule`, { rule, ...next }));
+      toast.success(next.enabled === kickRule.enabled ? "Đã lưu cài đặt kick" : `Đã ${next.enabled ? "bật" : "tắt"} kick`);
     } catch (exception) {
-      setError(errorText(exception));
+      toast.error(errorText(exception));
     } finally {
       setPending(false);
     }
@@ -98,7 +100,6 @@ function KickSetting({ group, rule, featureOn, onSaved }: { group: Group; rule: 
           </fieldset>
         </form>
       ) : null}
-      <ErrorNote message={error} />
     </div>
   );
 }
@@ -123,18 +124,18 @@ function SpamSettingsForm({ group, onSaved }: { group: Group; onSaved: (group: G
   const saved = group.spamSettings;
   const [settings, setSettings] = useState<SpamDraft>(() => toDraft(saved));
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string>();
+  const toast = useToast();
   const dirty = JSON.stringify(settings) !== JSON.stringify(toDraft(saved));
   const disabled = !group.spamGuardEnabled;
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setError(undefined);
     setPending(true);
     try {
       onSaved(await send<Group>("PATCH", `/groups/${encodeURIComponent(group.groupId)}/spam-settings`, fromDraft(settings)));
+      toast.success("Đã lưu cài đặt chống spam");
     } catch (exception) {
-      setError(errorText(exception));
+      toast.error(errorText(exception));
     } finally {
       setPending(false);
     }
@@ -171,7 +172,6 @@ function SpamSettingsForm({ group, onSaved }: { group: Group; onSaved: (group: G
         </label>
         {dirty ? <Button type="submit" variant="primary" pending={pending}>Lưu cài đặt spam</Button> : null}
       </fieldset>
-      <ErrorNote message={error} />
     </form>
   );
 }
@@ -188,7 +188,7 @@ function FeatureCard({ group, rule, toggleName, enabled, title, description, onC
   // The feature's own settings, shown between its switch and its kick setting.
   children?: ReactNode;
 }) {
-  const { toggle, error } = useToggle(group, onChange);
+  const { toggle } = useToggle(group, onChange);
   const kickRule = group.kickRules[rule];
   return (
     <Card>
@@ -201,7 +201,6 @@ function FeatureCard({ group, rule, toggleName, enabled, title, description, onC
             label={`Bật ${title.toLowerCase()}`}
             description={group.botIsAdmin ? "Tin vi phạm bị xóa và được ghi vào thống kê." : "Bot không phải QTV nên chỉ ghi nhận vi phạm, không xóa được tin."}
           />
-          <ErrorNote message={error} />
         </div>
         {children}
         <KickSetting
@@ -319,7 +318,7 @@ function Statistics({ group }: { group: Group }) {
   const { data: members, error, mutate } = useSWR<MemberViolations[]>(path);
   const [pendingClear, setPendingClear] = useState<PendingClear>();
   const [clearing, setClearing] = useState(false);
-  const [clearError, setClearError] = useState<string>();
+  const toast = useToast();
   const selectedId = searchParams.get("member");
   const selected = members?.find((member) => member.userId === selectedId);
 
@@ -334,17 +333,17 @@ function Statistics({ group }: { group: Group }) {
 
   async function clear() {
     if (pendingClear === undefined) return;
-    setClearError(undefined);
     setClearing(true);
     try {
       await mutate(send<MemberViolations[]>("DELETE", path, pendingClear.userId === undefined ? {} : { userId: pendingClear.userId }), { revalidate: false });
       await mutateGlobal("/overview");
       if (pendingClear.userId === undefined || pendingClear.userId === selectedId) selectMember(undefined);
-      setPendingClear(undefined);
+      toast.success(`Đã xóa thống kê của ${pendingClear.label}`);
     } catch (exception) {
-      setClearError(errorText(exception));
+      toast.error(errorText(exception));
     } finally {
       setClearing(false);
+      setPendingClear(undefined);
     }
   }
 
@@ -408,7 +407,6 @@ function Statistics({ group }: { group: Group }) {
         onCancel={() => setPendingClear(undefined)}
       >
         <p>Số lần vi phạm và các tin đã lưu của <strong className="text-foreground">{pendingClear?.label}</strong> sẽ bị xóa và không khôi phục được. Số đếm dùng để kick cũng được đặt lại.</p>
-        <ErrorNote message={clearError} />
       </ConfirmDialog>
     </>
   );
