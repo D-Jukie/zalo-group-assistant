@@ -127,3 +127,90 @@ export type MemberViolations = Readonly<{
   lastRule: ViolationRule;
   lastAt: number;
 }>;
+
+export const reminderRepeats = ["none", "daily", "weekly", "monthly"] as const;
+
+export type ReminderRepeat = (typeof reminderRepeats)[number];
+
+// A reminder on a group's Zalo board, whoever created it.
+export type GroupReminder = Readonly<{
+  reminderId: string;
+  groupId: string;
+  groupName: string;
+  title: string;
+  emoji: string;
+  startTime: number;
+  repeat: ReminderRepeat;
+  // When it goes off next; null once a reminder that does not repeat has passed.
+  nextTime: number | null;
+  creatorId: string;
+  createdByBot: boolean;
+  createdAt: number;
+  // How many members answered "tham gia" and "từ chối".
+  accepted: number;
+  rejected: number;
+  // Whether the bot still has a message of its own to send when this reminder's time comes.
+  dueMessage: boolean;
+}>;
+
+export type ReminderList = Readonly<{
+  items: readonly GroupReminder[];
+  // How many groups were read, and the ones whose board Zalo would not return.
+  groupCount: number;
+  failed: readonly Readonly<{ groupId: string; groupName: string; error: string }>[];
+  fetchedAt: number;
+}>;
+
+// A picture to send with a message. The kind and size are read from the file itself.
+export type MessageImage = Readonly<{ data: Buffer; extension: "jpg" | "png" | "webp"; width: number; height: number }>;
+
+// A message the bot posts to the group alongside a reminder: text, a picture, or both.
+export type ReminderMessage = Readonly<{ text: string; image?: MessageImage }>;
+
+export type NewReminder = Readonly<{
+  title: string;
+  startTime: number;
+  repeat: ReminderRepeat;
+  // Posted right after the reminder is created.
+  onCreate?: ReminderMessage;
+  // Posted when the reminder's time comes (every time, for a repeating reminder).
+  onDue?: ReminderMessage;
+}>;
+
+// A message waiting for its reminder's time.
+export type ScheduledReminderMessage = ReminderMessage & Readonly<{
+  id: string;
+  groupId: string;
+  reminderId: string;
+  // What the reminder says, so the waiting message can be told apart without asking Zalo.
+  title: string;
+  dueAt: number;
+  // The reminder's own start and repeat, from which the following times are worked out.
+  startTime: number;
+  repeat: ReminderRepeat;
+}>;
+
+// What happened in one of the groups a reminder was created for.
+// A waiting message as the dashboard lists it. The picture itself is fetched separately.
+export type PendingReminderMessage = Readonly<{
+  id: string;
+  groupId: string;
+  groupName: string;
+  reminderId: string;
+  title: string;
+  text: string;
+  hasImage: boolean;
+  dueAt: number;
+  repeat: ReminderRepeat;
+  updatedAt: number;
+}>;
+
+// A change to a waiting message. `image`: a new picture, null to remove the picture, or left out to keep it.
+export type ReminderMessageEdit = Readonly<{ text: string; image?: MessageImage | null }>;
+
+// `warning` is set when the reminder was created but one of its messages could not be sent or scheduled.
+export type ReminderCreateResult = Readonly<{ groupId: string; groupName: string; ok: boolean; error?: string; warning?: string }>;
+
+export type ReminderMember = Readonly<{ userId: string; name: string }>;
+
+export type ReminderResponses = Readonly<{ accepted: readonly ReminderMember[]; rejected: readonly ReminderMember[] }>;

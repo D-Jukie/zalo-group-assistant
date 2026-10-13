@@ -1,6 +1,6 @@
-import { MongoClient, type Collection, type UpdateFilter } from "mongodb";
+import { MongoClient, ObjectId, type Binary, type Collection, type UpdateFilter } from "mongodb";
 import { GroupEventType, type GroupInfo } from "zca-js";
-import { defaultKickRules, defaultSpamSettings, violationRules, type DailyViolations, type GroupSetting, type JsonRecord, type KickRule, type KickRules, type MemberViolations, type RecentViolation, type SpamSettings, type StoredGroup, type ViolationMatch, type ViolationMessage, type ViolationMessageStatus, type ViolationRule } from "../types.js";
+import { defaultKickRules, defaultSpamSettings, violationRules, type DailyViolations, type GroupSetting, type JsonRecord, type KickRule, type KickRules, type MemberViolations, type MessageImage, type PendingReminderMessage, type RecentViolation, type ReminderMessageEdit, type ReminderRepeat, type ScheduledReminderMessage, type SpamSettings, type StoredGroup, type ViolationMatch, type ViolationMessage, type ViolationMessageStatus, type ViolationRule } from "../types.js";
 import type { EncryptedSecret } from "./secret-box.js";
 import { asNumber, asString, escapeRegExp, isRecord, now, uniqueStrings } from "../utils.js";
 
@@ -68,6 +68,29 @@ type ViolationMessageDocument = {
 
 const violationMessageRetentionDays = 90;
 
+// A message the bot sends when a reminder's time comes. MongoDB hands the picture back as Binary.
+type ReminderMessageDocument = {
+  _id: ObjectId;
+  groupId: string;
+  reminderId: string;
+  // Missing on messages queued before the title was kept.
+  title?: string;
+  text: string;
+  image?: Omit<MessageImage, "data"> & { data: Binary | Buffer };
+  dueAt: number;
+  startTime: number;
+  repeat: ReminderRepeat;
+  updatedAt?: number;
+};
+
+function toObjectId(id: string): ObjectId | undefined {
+  return ObjectId.isValid(id) && id.length === 24 ? new ObjectId(id) : undefined;
+}
+
+function toImage(image: NonNullable<ReminderMessageDocument["image"]>): MessageImage {
+  return { ...image, data: Buffer.isBuffer(image.data) ? image.data : Buffer.from(image.data.buffer) };
+}
+
 type SettingDocument = {
   _id: string;
   values: string[];
@@ -82,6 +105,7 @@ export class Store {
     private readonly settings: Collection<SettingDocument>,
     private readonly violations: Collection<ViolationDocument>,
     private readonly violationMessages: Collection<ViolationMessageDocument>,
+    private readonly reminderMessages: Collection<ReminderMessageDocument>,
   ) {}
 
   public static async open(uri: string, databaseName: string): Promise<Store> {
@@ -96,6 +120,7 @@ export class Store {
       database.collection<SettingDocument>("settings"),
       database.collection<ViolationDocument>("violations"),
       database.collection<ViolationMessageDocument>("violation_messages"),
+      database.collection<ReminderMessageDocument>("reminder_messages"),
     );
     // MongoDB removes expired sessions on its own.
     await store.sessions.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
@@ -105,6 +130,8 @@ export class Store {
     await store.violationMessages.createIndex({ groupId: 1, userId: 1, at: -1 });
     await store.violationMessages.createIndex({ at: -1 });
     await store.violationMessages.createIndex({ createdAt: 1 }, { expireAfterSeconds: violationMessageRetentionDays * 24 * 60 * 60 });
+    await store.reminderMessages.createIndex({ dueAt: 1 });
+    await store.reminderMessages.createIndex({ groupId: 1, reminderId: 1 });
     return store;
   }
 
@@ -331,6 +358,98 @@ export class Store {
   // Until the master switch existed, botEnabled meant "block links" and each rule worked on its own.
   // Groups saved that way keep their behaviour: the link rule takes over the old value, and the
   // master switch is on wherever any rule was on. Groups already converted are left alone.
+  public async addReminderMessage(message: Omit<ScheduledReminderMessage, "id">): Promise<void> {
+    await this.reminderMessages.insertOne({
+      _id: new ObjectId(),
+      groupId: message.groupId,
+      reminderId: message.reminderId,
+      title: message.title,
+      text: message.text,
+      ...(message.image === undefined ? {} : { image: message.image }),
+      dueAt: message.dueAt,
+      startTime: message.startTime,
+      repeat: message.repeat,
+      updatedAt: now(),
+    });
+  }
+
+  // Every waiting message, soonest first, without the pictures themselves.
+  public async listReminderMessages(): Promise<Omit<PendingReminderMessage, "groupName">[]> {
+    const documents = await this.reminderMessages.find({}, { projection: { "image.data": 0 }, sort: { dueAt: 1 } }).toArray();
+    return documents.map((document) => ({
+      id: document._id.toHexString(),
+      groupId: document.groupId,
+      reminderId: document.reminderId,
+      title: document.title ?? "",
+      text: document.text,
+      hasImage: document.image !== undefined,
+      dueAt: document.dueAt,
+      repeat: document.repeat,
+      updatedAt: document.updatedAt ?? 0,
+    }));
+  }
+
+  public async getReminderMessageImage(id: string): Promise<MessageImage | undefined> {
+    const _id = toObjectId(id);
+    const document = _id === undefined ? null : await this.reminderMessages.findOne({ _id }, { projection: { image: 1 } });
+    return document?.image === undefined ? undefined : toImage(document.image);
+  }
+
+  // Changes a waiting message. "empty" when the change would leave it with neither text nor a picture.
+  public async updateReminderMessage(id: string, edit: ReminderMessageEdit): Promise<"updated" | "missing" | "empty"> {
+    const _id = toObjectId(id);
+    const current = _id === undefined ? null : await this.reminderMessages.findOne({ _id }, { projection: { "image.data": 0 } });
+    if (_id === undefined || current === null) return "missing";
+    const keepsImage = edit.image === undefined ? current.image !== undefined : edit.image !== null;
+    if (edit.text === "" && !keepsImage) return "empty";
+    const fields = { text: edit.text, updatedAt: now() };
+    const update: UpdateFilter<ReminderMessageDocument> = edit.image === undefined
+      ? { $set: fields }
+      : edit.image === null ? { $set: fields, $unset: { image: "" } } : { $set: { ...fields, image: edit.image } };
+    return (await this.reminderMessages.updateOne({ _id }, update)).matchedCount === 1 ? "updated" : "missing";
+  }
+
+  public async deleteReminderMessage(id: string): Promise<boolean> {
+    const _id = toObjectId(id);
+    return _id !== undefined && (await this.reminderMessages.deleteOne({ _id })).deletedCount === 1;
+  }
+
+  // The message that has been due the longest, if any is due.
+  public async findDueReminderMessage(at: number): Promise<ScheduledReminderMessage | undefined> {
+    const document = await this.reminderMessages.findOne({ dueAt: { $lte: at } }, { sort: { dueAt: 1 } });
+    if (document === null) return undefined;
+    const { image } = document;
+    return {
+      id: document._id.toHexString(),
+      groupId: document.groupId,
+      reminderId: document.reminderId,
+      title: document.title ?? "",
+      text: document.text,
+      ...(image === undefined ? {} : { image: toImage(image) }),
+      dueAt: document.dueAt,
+      startTime: document.startTime,
+      repeat: document.repeat,
+    };
+  }
+
+  // Takes a due message for sending: it leaves the queue, or moves to `nextDueAt` when its reminder repeats.
+  // False when something else took or moved it first.
+  public async claimReminderMessage(message: Pick<ScheduledReminderMessage, "id" | "dueAt">, nextDueAt: number | null): Promise<boolean> {
+    const filter = { _id: new ObjectId(message.id), dueAt: message.dueAt };
+    if (nextDueAt === null) return (await this.reminderMessages.deleteOne(filter)).deletedCount === 1;
+    return (await this.reminderMessages.updateOne(filter, { $set: { dueAt: nextDueAt } })).modifiedCount === 1;
+  }
+
+  public async removeReminderMessages(groupId: string, reminderId: string): Promise<void> {
+    await this.reminderMessages.deleteMany({ groupId, reminderId });
+  }
+
+  // "<groupId>:<reminderId>" of every reminder that still has a message waiting.
+  public async listReminderMessageKeys(): Promise<Set<string>> {
+    const documents = await this.reminderMessages.find({}, { projection: { groupId: 1, reminderId: 1 } }).toArray();
+    return new Set(documents.map((document) => `${document.groupId}:${document.reminderId}`));
+  }
+
   private async splitLegacyBotSwitch(): Promise<void> {
     await this.groups.updateMany({ linkGuardEnabled: { $exists: false } }, [
       {
