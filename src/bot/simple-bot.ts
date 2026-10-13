@@ -7,6 +7,7 @@ import { isRecord, now } from "../utils.js";
 import { Enforcer } from "./enforcer.js";
 import type { BotFeature } from "./feature.js";
 import { RecentMessages } from "./recent-messages.js";
+import { readInviteLink, readZaloSettings, settingsUpdate, type InviteLink, type ZaloGroupSettings } from "./zalo-settings.js";
 
 const groupInfoTtlMs = 10_000;
 // How long the list of groups the account belongs to is trusted before Zalo is asked again.
@@ -184,6 +185,31 @@ export class SimpleBot {
     await this.api.leaveGroup(groupId);
     this.groupCache.delete(groupId);
     this.membership = undefined;
+  }
+
+  // The settings Zalo keeps for the group, read afresh, and whether the bot may change them.
+  public async zaloSettings(groupId: string): Promise<Readonly<{ settings: ZaloGroupSettings; canEdit: boolean }>> {
+    const info = await this.syncGroup(groupId);
+    return { settings: readZaloSettings(info.setting), canEdit: this.isBotAdmin(info) };
+  }
+
+  // Changes some of Zalo's settings for the group. The others are read first and sent along unchanged.
+  public async updateZaloSettings(groupId: string, change: Partial<ZaloGroupSettings>): Promise<Readonly<{ settings: ZaloGroupSettings; canEdit: boolean }>> {
+    const info = await this.syncGroup(groupId);
+    if (!this.isBotAdmin(info)) throw new Error("Bot phải là trưởng hoặc phó nhóm thì mới đổi được cài đặt nhóm");
+    await this.api.updateGroupSettings(settingsUpdate(info.setting, change), groupId);
+    return this.zaloSettings(groupId);
+  }
+
+  public async inviteLink(groupId: string): Promise<InviteLink> {
+    return readInviteLink(await this.api.getGroupLinkDetail(groupId));
+  }
+
+  // Switches the group's invite link on or off. Switching it off makes the link stop working.
+  public async setInviteLink(groupId: string, enabled: boolean): Promise<InviteLink> {
+    if (enabled) return readInviteLink(await this.api.enableGroupLink(groupId));
+    await this.api.disableGroupLink(groupId);
+    return { enabled: false };
   }
 
   public async isBotAdminIn(groupId: string): Promise<boolean> {

@@ -5,6 +5,7 @@ import { parseAutoReply } from "../auto-reply/auto-reply.js";
 import type { AutoReplies, AutoReplySaveOutcome } from "../auto-reply/auto-replies.js";
 import type { JoinApprover } from "../approval/join-approver.js";
 import type { SimpleBot } from "../bot/simple-bot.js";
+import { describeSettingsChange, parseZaloSettingsChange } from "../bot/zalo-settings.js";
 import type { BannedWords } from "../moderation/banned-words.js";
 import type { BlockedLinks } from "../moderation/blocked-links.js";
 import { parseMessageRequest, parseReminderMessageEdit, parseReminderRequest } from "../reminders/reminder.js";
@@ -406,6 +407,57 @@ export function createAdminApp(bot: SimpleBot, store: Store, blockedLinks: Block
     });
     if (settings.enabled) await approver.process(groupId);
     response.json(await bot.getGroup(groupId) ?? updated);
+  });
+  // Zalo's own settings for the group and its invite link, read from Zalo each time.
+  app.get("/api/groups/:groupId/zalo-settings", async (request, response) => {
+    const { groupId } = request.params;
+    try {
+      const state = await bot.zaloSettings(groupId);
+      // The settings are worth showing even when the link cannot be read: Zalo only shows it to the
+      // group's admins, and the request may simply fail. The reason goes along instead of the link.
+      try {
+        response.json({ ...state, link: await bot.inviteLink(groupId) });
+      } catch (error: unknown) {
+        response.json({ ...state, linkError: errorMessage(error) });
+      }
+    } catch (error: unknown) {
+      response.status(502).json({ error: errorMessage(error) });
+    }
+  });
+  app.patch("/api/groups/:groupId/zalo-settings", async (request, response) => {
+    const { groupId } = request.params;
+    const change = parseZaloSettingsChange(request.body);
+    if (change === undefined) {
+      response.status(400).json({ error: "Cài đặt nhóm không hợp lệ" });
+      return;
+    }
+    const detail = describeSettingsChange(change);
+    try {
+      const state = await bot.updateZaloSettings(groupId, change);
+      logAdmin("settings", "Đổi cài đặt nhóm trên Zalo", { groupId, detail });
+      response.json(state);
+    } catch (error: unknown) {
+      logAdmin("settings", "Đổi cài đặt nhóm trên Zalo", { groupId, detail, ok: false, error: errorMessage(error) });
+      response.status(502).json({ error: errorMessage(error) });
+    }
+  });
+  app.post("/api/groups/:groupId/invite-link", async (request, response) => {
+    const { groupId } = request.params;
+    const body: unknown = request.body;
+    const enabled = isRecord(body) ? body.enabled : undefined;
+    if (typeof enabled !== "boolean") {
+      response.status(400).json({ error: "enabled phải là true hoặc false" });
+      return;
+    }
+    const title = enabled ? "Bật link mời nhóm" : "Tắt link mời nhóm";
+    try {
+      const link = await bot.setInviteLink(groupId, enabled);
+      logAdmin("settings", title, { groupId });
+      response.json(link);
+    } catch (error: unknown) {
+      logAdmin("settings", title, { groupId, ok: false, error: errorMessage(error) });
+      response.status(502).json({ error: errorMessage(error) });
+    }
   });
   // Everyone waiting to be let into the group, with the criteria each one fails.
   app.get("/api/groups/:groupId/pending-members", async (request, response) => {

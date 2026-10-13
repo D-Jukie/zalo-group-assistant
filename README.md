@@ -49,7 +49,7 @@ Dashboard là ứng dụng Next.js (App Router, Tailwind CSS, SWR) trong `web/`.
 | `/login` | Đăng nhập: mã PIN, mã QR đăng nhập Zalo cho bot, rồi mã gửi qua Zalo |
 | `/dashboard` | Thông tin bot, các con số tổng quan, biểu đồ vi phạm 14 ngày, 20 tin vi phạm gần nhất |
 | `/groups` | Danh sách nhóm, có công tắc bật tắt bot cho từng nhóm, tìm kiếm, bộ lọc và phân trang (lưu trên URL). Bot thực hiện việc tìm, lọc và chia trang; ô tìm chờ 250ms sau khi ngừng gõ rồi mới gửi yêu cầu, và tìm được theo tên không dấu, hoặc theo ID nhóm khi gõ từ 6 chữ số trở lên |
-| `/group/<id>` | Công tắc bật bot và các con số của nhóm ở đầu trang, rồi năm tab: `Tính năng` (từng tính năng kèm danh sách riêng và cài đặt kick của nó, và duyệt thành viên tự động), `Trả lời tự động` (câu trả lời riêng của nhóm), `Thành viên`, `Chờ duyệt`, `Vi phạm` (thống kê theo thành viên và tin vi phạm đã lưu) |
+| `/group/<id>` | Công tắc bật bot và các con số của nhóm ở đầu trang, rồi sáu tab: `Tính năng` (từng tính năng kèm danh sách riêng và cài đặt kick của nó, và duyệt thành viên tự động), `Trả lời tự động` (câu trả lời riêng của nhóm), `Thành viên`, `Chờ duyệt`, `Cài đặt nhóm` (cài đặt của chính Zalo cho nhóm và link mời), `Vi phạm` (thống kê theo thành viên và tin vi phạm đã lưu) |
 | `/features` | Cài đặt dùng chung của từng tính năng (Chặn link, Lọc từ cấm, Chống spam): danh sách link và từ cấm chung, ô thử một câu, mô tả chống spam |
 | `/violations` | Nhật ký vi phạm trên mọi nhóm: tìm theo tên thành viên, nội dung tin, link hoặc tên nhóm; lọc theo quy tắc, kết quả xử lý và khoảng ngày giờ; tải thêm tin cũ hơn |
 | `/reminders` | Lịch nhắc hẹn của Zalo ở mọi nhóm đang bật bot: nội dung, giờ bắt đầu, số người tham gia và từ chối, danh sách thành viên đã trả lời |
@@ -296,6 +296,25 @@ Với nhóm bật phê duyệt thành viên trên Zalo, bot có thể tự duy�
 - Bot xử lý khi có người xin vào, khi bạn lưu cài đặt, lúc khởi động và mỗi 5 phút, nên yêu cầu gửi tới lúc bot tắt vẫn được xét khi bot chạy lại.
 - Tab `Chờ duyệt` liệt kê người đang chờ: ảnh, tên, ID, ngày tham gia Zalo và từng tiêu chí họ chưa đạt. Tick một hoặc nhiều người rồi `Duyệt` hoặc `Từ chối` (từ chối có hỏi lại). Danh sách này dùng được cả khi tắt duyệt tự động.
 - `Lịch sử duyệt` ở cuối tab ghi 50 quyết định gần nhất, của bot lẫn của bạn, lưu 90 ngày (collection `join_reviews`).
+
+## Cài đặt nhóm trên Zalo và link mời
+
+Tab `Cài đặt nhóm` của trang `/group/<id>` cho đổi những cài đặt của chính Zalo cho nhóm mà không phải mở ứng dụng Zalo. Bot đọc chúng trực tiếp từ Zalo mỗi lần mở tab, và lưu lên Zalo ngay khi gạt một công tắc:
+
+- Chỉ trưởng và phó nhóm được nhắn tin
+- Duyệt thành viên mới
+- Thành viên mới đọc được tin gần đây
+- Khóa đổi tên và ảnh nhóm
+- Đánh dấu tin của trưởng và phó nhóm
+- Chỉ trưởng và phó nhóm được ghim
+- Khóa tạo ghi chú và nhắc hẹn
+- Khóa tạo bình chọn
+
+Thẻ `Link mời nhóm` hiện link mời đang hoạt động kèm nút `Sao chép`, và cho bật hoặc tắt link. Tắt link làm link đang dùng mất hiệu lực (có hỏi lại trước khi làm).
+
+- Bot phải là trưởng hoặc phó nhóm. Ở nhóm bot chỉ là thành viên, các công tắc chỉ xem được và Zalo không cho xem link mời.
+- Zalo nhận toàn bộ cài đặt của nhóm trong một lần gửi, nên bot đọc cài đặt hiện tại rồi gửi lại tất cả cùng với thay đổi. Vài cài đặt ít gặp mà thư viện `zca-js` chưa hỗ trợ (`bannFeature`, `dirtyMedia`, `banDuration`) luôn được gửi đi ở trạng thái tắt.
+- Mọi thay đổi, kể cả lần thất bại, được ghi vào lịch sử hoạt động.
 
 ## Bật bot theo nhóm
 

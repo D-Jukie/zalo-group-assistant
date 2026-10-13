@@ -11,6 +11,7 @@ import { ruleLabels, totalViolations, violationRules, type Group, type GroupTogg
 import { AutoReplyManager } from "./auto-replies-view";
 import { ConfirmDialog } from "./confirm-dialog";
 import { JoinApprovalCard, PendingMembers } from "./group-approvals";
+import { GroupZaloSettings } from "./group-zalo-settings";
 import { GroupCommands } from "./group-commands";
 import { GroupMembers } from "./group-members";
 import { ListManager } from "./list-manager";
@@ -479,6 +480,7 @@ const tabs = [
   { value: "replies", label: "Trả lời tự động" },
   { value: "members", label: "Thành viên" },
   { value: "pending", label: "Chờ duyệt" },
+  { value: "zalo", label: "Cài đặt nhóm" },
   { value: "violations", label: "Vi phạm" },
 ] as const;
 
@@ -572,6 +574,8 @@ function GroupPage({ group, backLink, onChange }: { group: Group; backLink: Reac
         <GroupMembers group={group} />
       ) : tab === "pending" ? (
         <PendingMembers group={group} />
+      ) : tab === "zalo" ? (
+        <GroupZaloSettings group={group} />
       ) : (
         <div className="space-y-4"><Statistics group={group} /></div>
       )}
