@@ -38,7 +38,8 @@ const choiceClass = (active: boolean) => cn("h-7 rounded px-2.5 text-sm transiti
 
 // Creates an answer or changes one. A native modal dialog: it traps focus and closes on Escape.
 // Opened from a group's page (`fixedGroupId`), a new answer belongs to that group and the scope is not asked.
-function Editor({ rule, groups, fixedGroupId, onClose, onSaved }: { rule: AutoReplyRule | undefined; groups: ReminderGroup[] | undefined; fixedGroupId?: string; onClose: () => void; onSaved: (rules: AutoReplyRule[]) => void }) {
+// `onDelete` asks to remove the answer being changed; the page confirms it once the editor has closed.
+function Editor({ rule, groups, fixedGroupId, onClose, onSaved, onDelete }: { rule: AutoReplyRule | undefined; groups: ReminderGroup[] | undefined; fixedGroupId?: string; onClose: () => void; onSaved: (rules: AutoReplyRule[]) => void; onDelete: (rule: AutoReplyRule) => void }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [kind, setKind] = useState<AutoReplyKind>(rule?.kind ?? "keyword");
   const [match, setMatch] = useState<AutoReplyMatch>(rule?.match ?? "contains");
@@ -183,6 +184,7 @@ function Editor({ rule, groups, fixedGroupId, onClose, onSaved }: { rule: AutoRe
         <p role="status" aria-live="polite" className={error ? "text-sm text-danger" : "sr-only"}>{error ?? ""}</p>
       </div>
       <div className="sticky bottom-0 flex justify-end gap-2 border-t border-border bg-surface px-5 py-3">
+        {rule === undefined ? null : <Button variant="ghost" className="mr-auto text-danger" disabled={pending} onClick={() => onDelete(rule)}>Xóa câu trả lời</Button>}
         <Button onClick={onClose}>Hủy</Button>
         <Button variant="primary" pending={pending} onClick={save}>{rule === undefined ? "Thêm" : "Lưu"}</Button>
       </div>
@@ -234,7 +236,8 @@ export function AutoReplyManager({ group, tabs }: { group?: Group; tabs?: ReactN
   const [editing, setEditing] = useState<AutoReplyRule | "new">();
   const selection = useSelection<AutoReplyRule>(ruleId);
   const [bulkPending, setBulkPending] = useState<BulkAction>();
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  // The answers waiting for the admin to confirm their removal: the ticked ones, or a single one.
+  const [deleting, setDeleting] = useState<readonly AutoReplyRule[]>();
   const toast = useToast();
   const groupNames = new Map((groups ?? []).map((group) => [group.groupId, group.name || group.groupId]));
 
@@ -248,7 +251,7 @@ export function AutoReplyManager({ group, tabs }: { group?: Group; tabs?: ReactN
       toast.error(errorText(exception));
     } finally {
       setBulkPending(undefined);
-      setConfirmingDelete(false);
+      setDeleting(undefined);
     }
   }
 
@@ -306,7 +309,7 @@ export function AutoReplyManager({ group, tabs }: { group?: Group; tabs?: ReactN
                 <col className="w-48" />
                 <col className="w-36" />
                 <col className="w-20" />
-                <col className="w-20" />
+                <col className="w-32" />
               </colgroup>
               <thead>
                 <tr className="h-11 border-b border-border text-left text-muted">
@@ -353,7 +356,12 @@ export function AutoReplyManager({ group, tabs }: { group?: Group; tabs?: ReactN
                     <td className="px-5 py-3 align-top">
                       <CompactSwitch checked={rule.enabled} disabled={bulkPending !== undefined} onChange={(enabled) => runBulk(enabled ? "enable" : "disable", [rule], `Đã ${enabled ? "bật" : "tắt"} câu trả lời cho “${rule.triggers[0] ?? ""}”`)} label={`Bật câu trả lời cho ${rule.triggers[0] ?? ""}`} />
                     </td>
-                    <td className="px-5 py-2 text-right align-top"><Button variant="ghost" onClick={() => setEditing(rule)}>Sửa</Button></td>
+                    <td className="py-2 pr-5 text-right align-top">
+                      <span className="flex justify-end gap-1">
+                        <Button variant="ghost" className="px-2" onClick={() => setEditing(rule)}>Sửa</Button>
+                        <Button variant="ghost" className="px-2 text-danger" disabled={bulkPending !== undefined} aria-label={`Xóa câu trả lời cho ${rule.triggers[0] ?? ""}`} onClick={() => setDeleting([rule])}>Xóa</Button>
+                      </span>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -389,22 +397,27 @@ export function AutoReplyManager({ group, tabs }: { group?: Group; tabs?: ReactN
       <SelectionBar count={selection.count} noun="câu trả lời" onClear={selection.clear}>
         <Button pending={bulkPending === "enable"} disabled={bulkPending !== undefined} onClick={() => runBulk("enable", selection.items, `Đã bật ${formatNumber(selection.count)} câu trả lời`)}>Bật</Button>
         <Button pending={bulkPending === "disable"} disabled={bulkPending !== undefined} onClick={() => runBulk("disable", selection.items, `Đã tắt ${formatNumber(selection.count)} câu trả lời`)}>Tắt</Button>
-        <Button variant="danger" disabled={bulkPending !== undefined} onClick={() => setConfirmingDelete(true)}>Xóa</Button>
+        <Button variant="danger" disabled={bulkPending !== undefined} onClick={() => setDeleting(selection.items)}>Xóa</Button>
       </SelectionBar>
       <ConfirmDialog
-        open={confirmingDelete}
-        title={`Xóa ${formatNumber(selection.count)} câu trả lời?`}
+        open={deleting !== undefined}
+        title={deleting?.length === 1 ? `Xóa câu trả lời cho “${deleting[0]?.triggers[0] ?? ""}”?` : `Xóa ${formatNumber(deleting?.length ?? 0)} câu trả lời?`}
         confirmLabel="Xóa"
         pending={bulkPending === "delete"}
-        onConfirm={() => void runBulk("delete", selection.items, `Đã xóa ${formatNumber(selection.count)} câu trả lời`)}
-        onCancel={() => setConfirmingDelete(false)}
+        onConfirm={() => {
+          if (deleting !== undefined) void runBulk("delete", deleting, deleting.length === 1 ? `Đã xóa câu trả lời cho “${deleting[0]?.triggers[0] ?? ""}”` : `Đã xóa ${formatNumber(deleting.length)} câu trả lời`);
+        }}
+        onCancel={() => setDeleting(undefined)}
       >
-        Bot sẽ không trả lời các từ khóa và lệnh đã chọn nữa. Không hoàn tác được.
-        {selection.items.some((rule) => rule.groupIds.length > 1) ? " Có câu trả lời đang áp dụng cho nhiều nhóm: xóa ở đây là xóa ở mọi nhóm đó." : ""}
+        {deleting?.length === 1 ? "Bot sẽ không trả lời các từ khóa và lệnh của câu này nữa." : "Bot sẽ không trả lời các từ khóa và lệnh đã chọn nữa."} Không hoàn tác được.
+        {(deleting ?? []).some((rule) => rule.groupIds.length > 1) ? " Có câu trả lời đang áp dụng cho nhiều nhóm: xóa ở đây là xóa ở mọi nhóm đó." : ""}
       </ConfirmDialog>
       {/* Mounted per answer, so the dialog always opens with that answer's own content. */}
       {editing !== undefined ? (
-        <Editor key={editing === "new" ? "new" : editing.id} rule={editing === "new" ? undefined : editing} groups={groups} {...(group === undefined ? {} : { fixedGroupId: group.groupId })} onClose={() => setEditing(undefined)} onSaved={(saved) => void mutate(saved, { revalidate: false })} />
+        <Editor key={editing === "new" ? "new" : editing.id} rule={editing === "new" ? undefined : editing} groups={groups} {...(group === undefined ? {} : { fixedGroupId: group.groupId })} onClose={() => setEditing(undefined)} onSaved={(saved) => void mutate(saved, { revalidate: false })} onDelete={(rule) => {
+          setEditing(undefined);
+          setDeleting([rule]);
+        }} />
       ) : null}
     </>
   );
