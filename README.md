@@ -54,7 +54,7 @@ Dashboard là ứng dụng Next.js (App Router, Tailwind CSS, SWR) trong `web/`.
 |---|---|
 | `/login` | Đăng nhập: mã PIN, mã QR đăng nhập Zalo cho bot, rồi mã gửi qua Zalo |
 | `/dashboard` | Thông tin bot, các con số tổng quan, biểu đồ vi phạm 14 ngày, 20 tin vi phạm gần nhất |
-| `/groups` | Danh sách nhóm, có công tắc bật tắt bot cho từng nhóm, tìm kiếm, bộ lọc và phân trang (lưu trên URL). Bot thực hiện việc tìm, lọc và chia trang; ô tìm chờ 250ms sau khi ngừng gõ rồi mới gửi yêu cầu, và tìm được theo tên không dấu, hoặc theo ID nhóm khi gõ từ 6 chữ số trở lên |
+| `/groups` | Danh sách nhóm, có công tắc bật tắt bot cho từng nhóm, tìm kiếm, bộ lọc và phân trang (lưu trên URL). Bot thực hiện việc tìm, lọc và chia trang; ô tìm chờ 250ms sau khi ngừng gõ rồi mới gửi yêu cầu, và tìm được theo tên không dấu, hoặc theo ID nhóm khi gõ từ 6 chữ số trở lên. Cột chức vụ ghi bot là trưởng nhóm, phó nhóm hay thành viên, và lọc được theo từng chức vụ |
 | `/group/<id>` | Công tắc bật bot và các con số của nhóm ở đầu trang, rồi sáu tab: `Tính năng` (từng tính năng kèm danh sách riêng và cài đặt kick của nó, và duyệt thành viên tự động), `Trả lời tự động` (câu trả lời riêng của nhóm), `Thành viên`, `Chờ duyệt`, `Cài đặt nhóm` (cài đặt của chính Zalo cho nhóm và link mời), `Vi phạm` (thống kê theo thành viên và tin vi phạm đã lưu) |
 | `/features` | Cài đặt dùng chung của từng tính năng (Chặn link, Lọc từ cấm, Chống spam): danh sách link và từ cấm chung, ô thử một câu, mô tả chống spam |
 | `/violations` | Nhật ký vi phạm trên mọi nhóm: tìm theo tên thành viên, nội dung tin, link hoặc tên nhóm; lọc theo quy tắc, kết quả xử lý và khoảng ngày giờ; tải thêm tin cũ hơn |
@@ -388,6 +388,17 @@ Thẻ `Link mời nhóm` hiện link mời đang hoạt động kèm nút `Sao c
 - Zalo nhận toàn bộ cài đặt của nhóm trong một lần gửi, nên bot đọc cài đặt hiện tại rồi gửi lại tất cả cùng với thay đổi. Vài cài đặt ít gặp mà thư viện `zca-js` chưa hỗ trợ (`bannFeature`, `dirtyMedia`, `banDuration`) luôn được gửi đi ở trạng thái tắt.
 - Mọi thay đổi, kể cả lần thất bại, được ghi vào lịch sử hoạt động.
 
+### Giờ yên lặng
+
+Thẻ `Giờ yên lặng` ở cùng tab cho đặt một khung giờ mỗi ngày, ví dụ 23:00 tới 06:00 hôm sau, mà trong đó chỉ trưởng nhóm và phó nhóm được nhắn tin. Mặc định tắt, đặt riêng cho từng nhóm.
+
+- Tới giờ bắt đầu, bot bật cài đặt `Chỉ trưởng và phó nhóm được nhắn tin` của Zalo; tới giờ kết thúc thì tắt lại. Zalo tự báo trong nhóm mỗi lần cài đặt này đổi.
+- Giờ tính theo đồng hồ của máy chạy bot. Bot xem giờ nửa phút một lần, nên nhóm được khóa và mở trong vòng nửa phút sau giờ đã đặt. Bật giờ yên lặng khi đang trong khung giờ thì nhóm được khóa ngay lần xem sau.
+- Bot chỉ hoàn tác việc nó đã làm. Nhóm đã được khóa sẵn lúc tới giờ thì bot để nguyên và không mở ra khi hết giờ. Bạn mở chat giữa chừng thì bot không khóa lại cho tới khung giờ hôm sau.
+- Tắt giờ yên lặng, hoặc tắt bot ở nhóm, trong lúc bot đang khóa thì chat được mở lại.
+- Bot phải là trưởng hoặc phó nhóm. Nếu Zalo từ chối khóa, lỗi được ghi vào lịch sử một lần cho khung giờ đó. Nếu mở lại thất bại, bot thử lại cho tới khi được để nhóm không bị khóa cả ngày, và chỉ ghi lỗi một lần.
+- Bot đang tắt hẳn (không chạy) thì không ai khóa hay mở nhóm. Khi chạy lại, bot làm tiếp đúng việc của khung giờ hiện tại, nhờ trạng thái lưu trong MongoDB (trường `quietHoursState` của nhóm).
+
 ## Bật bot theo nhóm
 
 Bot chỉ hoạt động ở những nhóm đã bật bot (công tắc ở cột `Trạng thái` của trang `/groups`, hoặc công tắc ở góc trên của trang `/group/<id>`), mặc định tắt. Ở nhóm chưa bật, bot bỏ qua hoàn toàn: không kiểm tra tin nhắn, không ghi nhận, không xóa, không kick, và cũng không gọi Zalo để lấy thông tin nhóm. Các tính năng (`Chặn link`, `Lọc từ cấm`, `Chống spam`) là công tắc con, chỉ có tác dụng khi bot đang bật ở nhóm đó.
@@ -431,7 +442,7 @@ Trang `Lịch sử hoạt động` ghi lại từng việc đã xảy ra, mới 
 | Duyệt thành viên | Bot tự duyệt người đạt tiêu chí; bạn duyệt hoặc từ chối; đổi cài đặt duyệt tự động |
 | Trả lời tự động | Mỗi lần bot trả lời một từ khóa, một lệnh hay `/random`; thêm, sửa, bật, tắt, xóa câu trả lời; đổi cài đặt `/random` |
 | Tin nhắn và nhắc hẹn | Tạo và xóa nhắc hẹn, gửi tin ngay, hẹn giờ tin, sửa và hủy tin chờ gửi; bot gửi tin khi đến giờ, hoặc bỏ qua vì bot không chạy hay nhóm đang tắt bot |
-| Cài đặt | Bật tắt bot và từng tính năng của nhóm, rời nhóm, cài đặt chống spam, quy tắc mời ra khỏi nhóm, thêm và xóa link bị chặn, từ cấm |
+| Cài đặt | Bật tắt bot và từng tính năng của nhóm, rời nhóm, cài đặt chống spam, quy tắc mời ra khỏi nhóm, thêm và xóa link bị chặn, từ cấm, đổi giờ yên lặng; bot bắt đầu và kết thúc giờ yên lặng |
 | Hệ thống | Bot khởi động (kèm tên và ID tài khoản Zalo), kết nối và mất kết nối Zalo, đăng xuất tài khoản Zalo của bot, gửi mã đăng nhập, đăng nhập và đăng xuất trang quản trị, đồng bộ danh sách nhóm |
 
 - Tìm theo tên hoạt động, nội dung, lý do lỗi, tên nhóm, tên hoặc ID thành viên; gõ không dấu cũng khớp chữ có dấu. Lọc theo loại, người thực hiện (bot tự làm hay quản trị viên), kết quả và khoảng ngày giờ. Mặc định là 30 ngày gần nhất; mọi bộ lọc nằm trên địa chỉ trang.
