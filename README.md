@@ -314,6 +314,7 @@ Trang `/auto-replies` (mục riêng ở sidebar) đặt sẵn những câu bot t
 - Khi một tin khớp nhiều câu trả lời, bot chỉ gửi một: lệnh trước, rồi từ khóa `Chính xác`, rồi `Có chứa`; cùng loại thì câu riêng của nhóm được dùng trước câu chung (nên một nhóm có thể có câu trả lời riêng cho cùng một lệnh), rồi tới câu tạo trước.
 - Bot chỉ xét tin nhắn chữ do thành viên gõ, không xét chú thích ảnh hay nội dung của link. Trưởng nhóm và phó nhóm nhắn cũng được trả lời.
 - Bảng ghi số lần mỗi câu đã được dùng và lần gần nhất. Có công tắc bật tắt cho từng câu, và chọn nhiều để bật, tắt hoặc xóa một lần.
+- Xóa một câu bằng nút `Xóa` ở cuối dòng, hoặc `Xóa câu trả lời` trong hộp `Sửa`. Trang hỏi lại trước khi xóa; câu trả lời áp dụng cho nhiều nhóm thì bị xóa ở mọi nhóm đó.
 
 ### Lệnh có sẵn: /random
 
