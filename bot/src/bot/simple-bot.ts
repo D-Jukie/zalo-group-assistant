@@ -2,7 +2,7 @@ import { ThreadType, type API, type GroupEvent, type Message } from "zca-js";
 import { noActivity, type ActivityRecorder } from "../activity/activity-log.js";
 import { writeLog } from "../logger.js";
 import type { Store } from "../storage/store.js";
-import type { AdminGroupView, BlockedMember, BotStatus, LiveGroupInfo, MemberAddition, MemberProfile, MemberRemoval, SentMessageRef, StoredGroup } from "../types.js";
+import type { AdminGroupView, BlockedMember, BotStatus, GroupRole, LiveGroupInfo, MemberAddition, MemberProfile, MemberRemoval, SentMessageRef, StoredGroup } from "../types.js";
 import { isRecord, now } from "../utils.js";
 import { Enforcer } from "./enforcer.js";
 import type { BotFeature } from "./feature.js";
@@ -327,7 +327,7 @@ export class SimpleBot {
     }
     return stored
       .filter((group) => memberIds.has(group.groupId))
-      .map((group) => this.toView(group, this.isGroupAdmin(group, this.ownId)))
+      .map((group) => this.toView(group, this.roleIn(group)))
       .sort((left, right) => Number(right.botIsAdmin) - Number(left.botIsAdmin) || left.name.localeCompare(right.name));
   }
 
@@ -349,7 +349,7 @@ export class SimpleBot {
       }
       const group = await this.store.getGroup(groupId);
       if (group === undefined) continue;
-      views.push(this.toView(group, this.isGroupAdmin(this.groupCache.get(groupId)?.info ?? group, this.ownId)));
+      views.push(this.toView(group, this.roleIn(this.groupCache.get(groupId)?.info ?? group)));
     }
     return views;
   }
@@ -360,10 +360,10 @@ export class SimpleBot {
     const info = await this.currentGroup(groupId);
     const group = await this.store.getGroup(groupId);
     if (group === undefined) return undefined;
-    return this.toView(group, this.isGroupAdmin(info ?? group, this.ownId));
+    return this.toView(group, this.roleIn(info ?? group));
   }
 
-  private toView(group: StoredGroup, botIsAdmin: boolean): AdminGroupView {
+  private toView(group: StoredGroup, botRole: GroupRole): AdminGroupView {
     return {
       groupId: group.groupId,
       name: group.name,
@@ -378,8 +378,10 @@ export class SimpleBot {
       joinApproval: group.joinApproval,
       commands: group.commands,
       welcome: group.welcome,
+      quietHours: group.quietHours,
       kickRules: group.kickRules,
-      botIsAdmin,
+      botIsAdmin: botRole !== "member",
+      botRole,
       updatedAt: group.updatedAt,
     };
   }
@@ -441,6 +443,12 @@ export class SimpleBot {
     } catch {
       return cached?.info;
     }
+  }
+
+  // The bot's place in the group: owner, deputy or ordinary member.
+  private roleIn(info: Readonly<{ creatorId: string; adminIds: readonly string[] }>): GroupRole {
+    if (info.creatorId === this.ownId) return "owner";
+    return info.adminIds.some((adminId) => adminId === this.ownId) ? "admin" : "member";
   }
 
   private isGroupAdmin(info: Readonly<{ creatorId: string; adminIds: readonly string[] }>, userId: string): boolean {

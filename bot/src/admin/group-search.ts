@@ -1,6 +1,7 @@
 import type { AdminGroupView } from "../types.js";
 
-export const groupFilters = ["all", "enabled", "admin", "member"] as const;
+// "owner" and "deputy" are the groups where the bot is trưởng nhóm and phó nhóm; "member" the rest.
+export const groupFilters = ["all", "enabled", "owner", "deputy", "member"] as const;
 
 export type GroupFilter = (typeof groupFilters)[number];
 
@@ -31,8 +32,9 @@ function fold(text: string): string {
 
 function matchesFilter(group: AdminGroupView, filter: GroupFilter): boolean {
   if (filter === "enabled") return group.botEnabled;
-  if (filter === "admin") return group.botIsAdmin;
-  if (filter === "member") return !group.botIsAdmin;
+  if (filter === "owner") return group.botRole === "owner";
+  if (filter === "deputy") return group.botRole === "admin";
+  if (filter === "member") return group.botRole === "member";
   return true;
 }
 

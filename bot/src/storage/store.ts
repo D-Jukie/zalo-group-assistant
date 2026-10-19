@@ -1,6 +1,6 @@
 import { MongoClient, ObjectId, type Binary, type Collection, type Filter, type UpdateFilter } from "mongodb";
 import { GroupEventType, type GroupInfo } from "zca-js";
-import { defaultGroupCommands, defaultGroupWelcome, type GroupWelcomeSettings, type ActivityEntry, type ActivityFilter, type NewActivity, defaultJoinApproval, defaultKickRules, defaultSpamSettings, violationRules, type AutoReplyDraft, type AutoReplyKind, type GroupCommandSettings, type AutoReplyMatch, type AutoReplyRule, type JoinApprovalSettings, type JoinReview, type DailyViolations, type GroupSetting, type JsonRecord, type KickRule, type KickRules, type MemberViolations, type MessageImage, type PendingReminderMessage, type RecentViolation, type ReminderMessageEdit, type ViolationLogFilter, type ReminderRepeat, type ScheduledReminderMessage, type MessageUrgency, type SentBatch, type SentBatchGroup, type SpamSettings, type StoredGroup, type ViolationMatch, type ViolationMessage, type ViolationMessageStatus, type ViolationRule } from "../types.js";
+import { defaultGroupCommands, defaultGroupWelcome, defaultQuietHours, type GroupWelcomeSettings, type QuietHoursSettings, type QuietHoursState, type ActivityEntry, type ActivityFilter, type NewActivity, defaultJoinApproval, defaultKickRules, defaultSpamSettings, violationRules, type AutoReplyDraft, type AutoReplyKind, type GroupCommandSettings, type AutoReplyMatch, type AutoReplyRule, type JoinApprovalSettings, type JoinReview, type DailyViolations, type GroupSetting, type JsonRecord, type KickRule, type KickRules, type MemberViolations, type MessageImage, type PendingReminderMessage, type RecentViolation, type ReminderMessageEdit, type ViolationLogFilter, type ReminderRepeat, type ScheduledReminderMessage, type MessageUrgency, type SentBatch, type SentBatchGroup, type SpamSettings, type StoredGroup, type ViolationMatch, type ViolationMessage, type ViolationMessageStatus, type ViolationRule } from "../types.js";
 import type { EncryptedSecret } from "./secret-box.js";
 import { asNumber, asString, escapeRegExp, isRecord, now, uniqueStrings } from "../utils.js";
 import { maxMessageImagesBytes, totalImageBytes } from "../reminders/reminder.js";
@@ -22,6 +22,8 @@ type GroupDocument = {
   joinApproval?: Partial<JoinApprovalSettings>;
   commands?: Partial<{ random: Partial<GroupCommandSettings["random"]> }>;
   welcome?: Partial<GroupWelcomeSettings>;
+  quietHours?: Partial<QuietHoursSettings>;
+  quietHoursState?: QuietHoursState | null;
   // Rules saved before kicking became a per-feature setting have no `enabled` of their own.
   kickRules?: Partial<Record<ViolationRule, Readonly<{ enabled?: boolean; count: number; windowSeconds: number }>>>;
   // The two older ways of switching kicking on, only read so groups saved by older versions keep their behaviour:
@@ -306,6 +308,16 @@ export class Store {
 
   public async setGroupWelcome(groupId: string, welcome: GroupWelcomeSettings): Promise<StoredGroup | undefined> {
     return this.updateGroup(groupId, { welcome: { enabled: welcome.enabled, text: welcome.text } });
+  }
+
+  public async setGroupQuietHours(groupId: string, quietHours: QuietHoursSettings): Promise<StoredGroup | undefined> {
+    return this.updateGroup(groupId, { quietHours: { enabled: quietHours.enabled, start: quietHours.start, end: quietHours.end } });
+  }
+
+  // What the bot itself did about a group's quiet hours. Not a change of the group's settings, so
+  // the group's own time of change is left alone.
+  public async setQuietHoursState(groupId: string, state: QuietHoursState): Promise<void> {
+    await this.groups.updateOne({ _id: groupId }, { $set: { quietHoursState: { window: state.window, locked: state.locked } } });
   }
 
   public async setGroupCommands(groupId: string, commands: GroupCommandSettings): Promise<StoredGroup | undefined> {
@@ -882,6 +894,8 @@ export class Store {
       joinApproval: { ...defaultJoinApproval, ...document.joinApproval },
       commands: { random: { ...defaultGroupCommands.random, ...document.commands?.random } },
       welcome: { ...defaultGroupWelcome, ...document.welcome },
+      quietHours: { ...defaultQuietHours, ...document.quietHours },
+      quietHoursState: document.quietHoursState ?? null,
       kickRules: this.toKickRules(document),
       updatedAt: document.updatedAt,
     };

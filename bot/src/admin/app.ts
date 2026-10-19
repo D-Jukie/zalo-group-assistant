@@ -13,6 +13,7 @@ import { parseMessageRequest, parseReminderMessageEdit, parseReminderRequest } f
 import { parsePollRequest } from "../polls/poll.js";
 import type { PollBoard } from "../polls/poll-board.js";
 import type { ReminderBoard } from "../reminders/reminder-board.js";
+import { describeQuietHours, parseQuietHours } from "../quiet-hours/quiet-hours.js";
 import { parseWelcomeSettings } from "../welcome/welcome.js";
 import type { Store } from "../storage/store.js";
 import { violationMessageStatuses, violationRuleNames, violationRules, type ActivityCategory, type NewActivity, type GroupMember, type GroupSetting, type RateRule, type ViolationLogFilter, type ViolationRule, type ReminderCreateResult } from "../types.js";
@@ -390,6 +391,21 @@ export function createAdminApp(bot: SimpleBot, store: Store, blockedLinks: Block
     logAdmin("messages", "Đổi cài đặt chào thành viên mới", { groupId: request.params.groupId, detail: [settings.enabled ? "Bật" : "Tắt", previewText(settings.text)].filter((part) => part !== "").join(": ") });
     response.json(await bot.getGroup(request.params.groupId) ?? updated);
   });
+  // The hours when only the group's owner and deputies may write, and whether the bot keeps them.
+  app.patch("/api/groups/:groupId/quiet-hours", async (request, response) => {
+    const settings = parseQuietHours(request.body);
+    if (typeof settings === "string") {
+      response.status(400).json({ error: settings });
+      return;
+    }
+    const updated = await store.setGroupQuietHours(request.params.groupId, settings);
+    if (updated === undefined) {
+      response.status(404).json({ error: "Không tìm thấy nhóm" });
+      return;
+    }
+    logAdmin("settings", "Đổi giờ yên lặng", { groupId: request.params.groupId, detail: `${settings.enabled ? "Bật" : "Tắt"}: ${describeQuietHours(settings)}` });
+    response.json(await bot.getGroup(request.params.groupId) ?? updated);
+  });
   // Which of the bot's own commands work in the group, and for whom.
   app.patch("/api/groups/:groupId/commands", async (request, response) => {
     const body: unknown = request.body;
@@ -561,7 +577,7 @@ export function createAdminApp(bot: SimpleBot, store: Store, blockedLinks: Block
         pageSize: isIntegerBetween(pageSize, 1, maxGroupPageSize) ? pageSize : defaultGroupPageSize,
       });
       // What the bot is in this group decides which actions the table offers.
-      const botRole = group?.creatorId === bot.ownId ? "owner" : group?.botIsAdmin === true ? "admin" : "member";
+      const botRole = group?.botRole ?? "member";
       response.json({ ...found, memberCount: rows.length, complete, botRole });
     } catch (error: unknown) {
       response.status(502).json({ error: `Không lấy được danh sách thành viên từ Zalo: ${errorMessage(error)}` });

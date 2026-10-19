@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { defaultGroupCommands, defaultGroupWelcome, defaultKickRules, defaultSpamSettings, type JoinApprovalSettings, type JoinReview, type LiveGroupInfo, type NewActivity, type StoredGroup } from "../types.js";
+import { defaultGroupCommands, defaultGroupWelcome, defaultQuietHours, defaultKickRules, defaultSpamSettings, type JoinApprovalSettings, type JoinReview, type LiveGroupInfo, type NewActivity, type StoredGroup } from "../types.js";
 import { JoinApprover } from "./join-approver.js";
 
 const day = 24 * 60 * 60 * 1000;
@@ -18,7 +18,7 @@ function setup(options: Readonly<{ waiting: readonly Waiting[]; settings?: Parti
   const info = { groupId: "g1", creatorId: "owner", adminIds: options.adminIds ?? ["bot"], totalMember: options.totalMember ?? 10, maxMember: 1000, setting: { joinAppr: 1 } } as unknown as LiveGroupInfo;
   const group = {
     groupId: "g1", name: "Nhóm", creatorId: "owner", adminIds: [], memberCount: 10, botEnabled: options.botEnabled ?? true, linkGuardEnabled: false, badWordFilterEnabled: false, spamGuardEnabled: false,
-    spamSettings: defaultSpamSettings, joinApproval: { enabled: true, requireAvatar: true, minAccountAgeDays: 90, ...options.settings }, commands: defaultGroupCommands, welcome: defaultGroupWelcome, kickRules: defaultKickRules, updatedAt: 0,
+    spamSettings: defaultSpamSettings, joinApproval: { enabled: true, requireAvatar: true, minAccountAgeDays: 90, ...options.settings }, commands: defaultGroupCommands, welcome: defaultGroupWelcome, quietHours: defaultQuietHours, quietHoursState: null, kickRules: defaultKickRules, updatedAt: 0,
   } satisfies StoredGroup;
   const api = {
     listener: { on: () => undefined },

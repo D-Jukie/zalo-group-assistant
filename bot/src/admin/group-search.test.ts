@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { defaultGroupCommands, defaultGroupWelcome, defaultJoinApproval, defaultKickRules, defaultSpamSettings, type AdminGroupView } from "../types.js";
+import { defaultGroupCommands, defaultGroupWelcome, defaultJoinApproval, defaultKickRules, defaultQuietHours, defaultSpamSettings, type AdminGroupView } from "../types.js";
 import { searchGroups, summarizeGroups, type GroupQuery } from "./group-search.js";
 
 function group(groupId: string, name: string, overrides: Partial<AdminGroupView> = {}): AdminGroupView {
@@ -18,8 +18,10 @@ function group(groupId: string, name: string, overrides: Partial<AdminGroupView>
     joinApproval: defaultJoinApproval,
     commands: defaultGroupCommands,
     welcome: defaultGroupWelcome,
+    quietHours: defaultQuietHours,
     kickRules: defaultKickRules,
     botIsAdmin: false,
+    botRole: "member",
     updatedAt: 0,
     ...overrides,
   };
@@ -27,12 +29,12 @@ function group(groupId: string, name: string, overrides: Partial<AdminGroupView>
 
 const kickLinks = { ...defaultKickRules, link: { enabled: true, count: 3, windowSeconds: 10 } };
 const groups = [
-  group("100", "Nhóm bán hàng", { botIsAdmin: true, botEnabled: true, linkGuardEnabled: true, kickRules: kickLinks }),
+  group("100", "Nhóm bán hàng", { botIsAdmin: true, botRole: "owner", botEnabled: true, linkGuardEnabled: true, kickRules: kickLinks }),
   group("200", "Nhóm bạn bè", { botEnabled: true, badWordFilterEnabled: true, linkGuardEnabled: true, kickRules: kickLinks }),
-  group("300", "Cộng đồng lập trình", { botIsAdmin: true, linkGuardEnabled: true }),
+  group("300", "Cộng đồng lập trình", { botIsAdmin: true, botRole: "admin", linkGuardEnabled: true }),
   group("400", "Đội bóng phường", { botEnabled: false, spamGuardEnabled: true }),
   group("500", "Hội phụ huynh"),
-  group("600", "Chợ cư dân", { botIsAdmin: true, botEnabled: true, spamGuardEnabled: true, kickRules: { ...defaultKickRules, spam: { enabled: true, count: 3, windowSeconds: 60 } } }),
+  group("600", "Chợ cư dân", { botIsAdmin: true, botRole: "owner", botEnabled: true, spamGuardEnabled: true, kickRules: { ...defaultKickRules, spam: { enabled: true, count: 3, windowSeconds: 60 } } }),
 ];
 // Real Zalo IDs are long numbers; these two also contain "10" and "12345".
 const numbered = [
@@ -66,7 +68,8 @@ await test("a short number only searches names, not IDs", () => {
 
 await test("applies the filter together with the search text", () => {
   assert.deepEqual(ids({ filter: "enabled" }), ["100", "200", "600"]);
-  assert.deepEqual(ids({ filter: "admin" }), ["100", "300", "600"]);
+  assert.deepEqual(ids({ filter: "owner" }), ["100", "600"]);
+  assert.deepEqual(ids({ filter: "deputy" }), ["300"]);
   assert.deepEqual(ids({ filter: "member" }), ["200", "400", "500"]);
   assert.deepEqual(ids({ filter: "member", text: "nhom" }), ["200"]);
 });

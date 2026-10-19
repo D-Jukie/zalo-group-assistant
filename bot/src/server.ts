@@ -16,6 +16,7 @@ import { SpamGuardFeature } from "./features/spam-guard.js";
 import { BannedWords } from "./moderation/banned-words.js";
 import { BlockedLinks } from "./moderation/blocked-links.js";
 import { PollBoard } from "./polls/poll-board.js";
+import { QuietHoursKeeper } from "./quiet-hours/quiet-hours-keeper.js";
 import { ReminderBoard } from "./reminders/reminder-board.js";
 import { ReminderMessenger } from "./reminders/reminder-messenger.js";
 import { Store } from "./storage/store.js";
@@ -76,6 +77,9 @@ async function main(): Promise<void> {
       const welcomer = new Welcomer(api, store, ownId, activity);
       welcomer.start();
       stoppers.push(() => welcomer.stop());
+      const quietHours = new QuietHoursKeeper(bot, store, activity);
+      quietHours.start();
+      stoppers.push(() => quietHours.stop());
       // Reminders are created, changed and answered through group events.
       api.listener.on("group_event", (event) => reminders.forget(event.threadId));
       const adminApp = createAdminApp(bot, store, blockedLinks, bannedWords, reminders, approver, autoReplies, new PollBoard(api, bot), activity);

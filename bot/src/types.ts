@@ -60,6 +60,21 @@ export type GroupWelcomeSettings = Readonly<{ enabled: boolean; text: string }>;
 
 export const defaultGroupWelcome: GroupWelcomeSettings = { enabled: false, text: "" };
 
+// Hours when only the group's owner and deputies may write. The bot switches on Zalo's own "chỉ trưởng
+// và phó nhóm được nhắn tin" at `start` and off again at `end`, both in minutes after midnight on the
+// clock of the machine the bot runs on. The hours may run past midnight, as 23:00 to 06:00 does.
+export type QuietHoursSettings = Readonly<{ enabled: boolean; start: number; end: number }>;
+
+// Off until an admin turns it on. These are the hours offered when they do.
+export const defaultQuietHours: QuietHoursSettings = { enabled: false, start: 23 * 60, end: 6 * 60 };
+
+// What the bot did about the quiet hours under way or last over: `window` names them by the day they
+// began, and `locked` says whether it was the bot, not an admin, that locked the group's chat.
+export type QuietHoursState = Readonly<{ window: string; locked: boolean }>;
+
+// The bot's place in a group: owner (trưởng nhóm), deputy (phó nhóm) or an ordinary member.
+export type GroupRole = "owner" | "admin" | "member";
+
 // The commands the bot knows by itself (as opposed to the answers an admin writes), switched per group.
 export type GroupCommandSettings = Readonly<{
   // "/random": picks members of the group or a number in a range.
@@ -84,6 +99,8 @@ export type StoredGroup = Readonly<{
   joinApproval: JoinApprovalSettings;
   commands: GroupCommandSettings;
   welcome: GroupWelcomeSettings;
+  quietHours: QuietHoursSettings;
+  quietHoursState: QuietHoursState | null;
   kickRules: KickRules;
   updatedAt: number;
 }>;
@@ -103,8 +120,11 @@ export type AdminGroupView = Readonly<{
   commands: GroupCommandSettings;
   welcome: GroupWelcomeSettings;
   kickRules: KickRules;
+  quietHours: QuietHoursSettings;
   // Without admin rights the bot cannot delete or kick, so it only records violations.
   botIsAdmin: boolean;
+  // Which of the two admin roles it has, if any.
+  botRole: GroupRole;
   updatedAt: number;
 }>;
 
