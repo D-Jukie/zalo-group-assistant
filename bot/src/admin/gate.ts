@@ -12,6 +12,8 @@ export type Gate = Readonly<{
   app: Express;
   // Hands over to the admin API once the bot is signed in to Zalo.
   open(adminApp: Express, loginCodes: LoginCodeService): void;
+  // Takes it back when the bot is signed out of Zalo: the dashboard shows the QR code again.
+  close(): void;
 }>;
 
 export type GateOptions = Readonly<{
@@ -20,6 +22,8 @@ export type GateOptions = Readonly<{
   passes: UnlockPasses;
   adminEmail: string | undefined;
   zaloState: () => ZaloLoginState;
+  // Stops the bot and forgets its Zalo session, so that another account can be signed in.
+  signOutBot: () => Promise<void>;
   activity?: ActivityRecorder;
 }>;
 
@@ -37,7 +41,7 @@ function sameText(actual: string, expected: string): boolean {
 // PIN, the bot's own sign-in to Zalo by QR code when it has no session, then a code the bot sends
 // to the admin over Zalo, which is what makes a browser remembered. It listens before the bot is
 // signed in, so that the QR code can be shown on the dashboard.
-export function createGate({ store, pin, passes, adminEmail, zaloState, activity = noActivity }: GateOptions): Gate {
+export function createGate({ store, pin, passes, adminEmail, zaloState, signOutBot, activity = noActivity }: GateOptions): Gate {
   const app = express();
   let adminApp: Express | undefined;
   let loginCodes: LoginCodeService | undefined;
@@ -120,6 +124,26 @@ export function createGate({ store, pin, passes, adminEmail, zaloState, activity
     const state = zaloState();
     response.json(adminApp === undefined && state.status === "ready" ? { status: "starting" } : state);
   });
+  // Signs the bot out of its Zalo account, not the admin out of the dashboard. Only a signed-in admin
+  // may do it: a browser that has only entered the PIN cannot stop the bot.
+  app.post("/api/auth/bot/logout", async (request, response) => {
+    if (!await isAuthenticated(request, store)) {
+      response.status(401).json({ error: "Hãy đăng nhập trang quản trị trước" });
+      return;
+    }
+    if (adminApp === undefined) {
+      response.status(409).json({ error: "Bot chưa đăng nhập Zalo" });
+      return;
+    }
+    try {
+      await signOutBot();
+      response.json({ ok: true });
+    } catch (error: unknown) {
+      console.error("[ZALO SIGN-OUT FAILED]", errorMessage(error));
+      log("Đăng xuất tài khoản Zalo của bot", { ok: false, error: errorMessage(error) });
+      response.status(500).json({ error: `Không đăng xuất được Zalo: ${errorMessage(error)}` });
+    }
+  });
   app.post("/api/auth/code", requireUnlocked, async (_request, response) => {
     if (loginCodes === undefined) {
       response.status(409).json({ error: "Bot chưa đăng nhập Zalo" });
@@ -163,7 +187,9 @@ export function createGate({ store, pin, passes, adminEmail, zaloState, activity
 
   app.use((request: Request, response: Response, next: NextFunction) => {
     if (adminApp !== undefined) adminApp(request, response, next);
-    else response.status(503).json({ error: "Bot chưa đăng nhập Zalo" });
+    // While the bot waits for a QR code to be scanned, the code tells the dashboard to go to it. A bot
+    // that is only starting up (a restart, say) is left out, so open pages and drafts stay where they are.
+    else response.status(503).json({ error: "Bot chưa đăng nhập Zalo", ...(zaloState().status === "qr" ? { code: "bot-signed-out" } : {}) });
   });
 
   return {
@@ -171,6 +197,10 @@ export function createGate({ store, pin, passes, adminEmail, zaloState, activity
     open(admin, codes) {
       adminApp = admin;
       loginCodes = codes;
+    },
+    close() {
+      adminApp = undefined;
+      loginCodes = undefined;
     },
   };
 }

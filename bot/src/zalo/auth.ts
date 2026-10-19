@@ -72,6 +72,13 @@ export class ZaloLogin {
     });
   }
 
+  // Forgets the saved session, so that the next run asks for a QR code: this is how the bot moves to
+  // another account. zca-js has no way to end a session on Zalo's side, so it is only never used again.
+  public async signOut(): Promise<void> {
+    await this.store.deleteSecret(credentialsSecretName);
+    this.current = { status: "starting" };
+  }
+
   public async run(): Promise<API> {
     // selfListen: Zalo echoes the bot's own messages, which carry the id needed to take them back.
     const zalo = new Zalo({ logging: false, selfListen: true });

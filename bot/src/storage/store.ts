@@ -546,6 +546,10 @@ export class Store {
     await this.secrets.updateOne({ _id: name }, { $set: { ...secret, updatedAt: now() } }, { upsert: true });
   }
 
+  public async deleteSecret(name: string): Promise<void> {
+    await this.secrets.deleteOne({ _id: name });
+  }
+
   // Named lists of strings, such as the blocked links or the custom banned words.
   public async getList(name: string): Promise<string[]> {
     const document = await this.settings.findOne({ _id: name });

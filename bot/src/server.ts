@@ -1,4 +1,5 @@
 import "dotenv/config";
+import type { API } from "zca-js";
 import { ActivityLog } from "./activity/activity-log.js";
 import { createAdminApp } from "./admin/app.js";
 import { createGate } from "./admin/gate.js";
@@ -20,6 +21,7 @@ import { ReminderMessenger } from "./reminders/reminder-messenger.js";
 import { Store } from "./storage/store.js";
 import { Welcomer } from "./welcome/welcomer.js";
 import { ZaloLogin } from "./zalo/auth.js";
+import { BotSessions, type SessionRun } from "./zalo/sessions.js";
 
 // Zalo rejects messages from an account to itself, so the code goes to the owner's own Zalo account.
 function createLoginCodeSender(bot: SimpleBot, config: Config): (code: string) => Promise<void> {
@@ -46,48 +48,61 @@ async function main(): Promise<void> {
   const bannedWords = await BannedWords.load(store);
   const autoReplies = await AutoReplies.load(store);
   if (config.adminEmail === undefined) console.warn("[CONFIG] Chưa đặt ADMIN_EMAIL; không thể đặt mã PIN và mở trang quản trị.");
-  // The gate listens first: the QR code that signs the bot in to Zalo is shown on the dashboard.
   const zaloLogin = new ZaloLogin(store, config.credentialsKey);
-  const gate = createGate({ store, pin: new AdminPin(store, config.credentialsKey), passes: new UnlockPasses(), adminEmail: config.adminEmail, zaloState: () => zaloLogin.state, activity });
+  // The gate listens first: the QR code that signs the bot in to Zalo is shown on the dashboard.
+  const gate = createGate({ store, pin: new AdminPin(store, config.credentialsKey), passes: new UnlockPasses(), adminEmail: config.adminEmail, zaloState: () => zaloLogin.state, signOutBot: () => sessions.signOut(), activity });
   const server = gate.app.listen(config.port, config.host);
-  // Set once the bot is signed in to Zalo and running.
-  let stopBot: (() => void) | undefined = undefined;
+
+  // Everything that works through one account's session, from its sign-in until it is signed out.
+  async function startBot(api: API): Promise<SessionRun> {
+    const ownId = api.getOwnId();
+    // "/random" picks from the group's members, which the bot reads; the bot itself is made just below.
+    const members = { ownId, listMembers: (groupId: string) => bot.listMembers(groupId) };
+    const bot: SimpleBot = new SimpleBot(api, store, ownId, [new LinkGuardFeature(blockedLinks), new BadWordFilterFeature(bannedWords), new SpamGuardFeature(), new AutoReplyFeature(api, autoReplies, members, activity)], activity);
+    const stoppers: (() => void)[] = [];
+    const stop = (): void => {
+      for (const item of stoppers) item();
+    };
+    try {
+      await bot.start();
+      stoppers.push(() => bot.stop());
+      const reminders = new ReminderBoard(api, bot, store, undefined, bot.ownMessages);
+      const reminderMessenger = new ReminderMessenger(api, store, activity, bot.ownMessages);
+      reminderMessenger.start();
+      stoppers.push(() => reminderMessenger.stop());
+      const approver = new JoinApprover(api, bot, store, activity);
+      approver.start();
+      stoppers.push(() => approver.stop());
+      const welcomer = new Welcomer(api, store, ownId, activity);
+      welcomer.start();
+      stoppers.push(() => welcomer.stop());
+      // Reminders are created, changed and answered through group events.
+      api.listener.on("group_event", (event) => reminders.forget(event.threadId));
+      const adminApp = createAdminApp(bot, store, blockedLinks, bannedWords, reminders, approver, autoReplies, new PollBoard(api, bot), activity);
+      const loginCodes = new LoginCodeService(createLoginCodeSender(bot, config));
+      const account = `${bot.status().displayName || "Bot"} (${ownId})`;
+      activity.record({ category: "system", actor: "bot", title: "Bot khởi động", detail: account });
+      return { open: () => gate.open(adminApp, loginCodes), stop, account: () => account };
+    } catch (error: unknown) {
+      // Whatever had been started is stopped again before the next attempt.
+      stop();
+      throw error;
+    }
+  }
+
+  const sessions = new BotSessions({ login: zaloLogin, start: startBot, closeGate: () => gate.close(), activity });
   const shutdown = (): void => {
     server.close();
-    if (stopBot === undefined) {
-      // Still waiting for the QR code to be scanned: that wait never ends by itself, so the process is ended here.
+    if (!sessions.shutdown()) {
+      // Waiting for the QR code to be scanned: that wait never ends by itself, so the process is ended here.
       void store.close().finally(() => process.exit(0));
       return;
     }
-    stopBot();
     void store.close();
   };
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
-  const api = await zaloLogin.run();
-  const ownId = api.getOwnId();
-  // "/random" picks from the group's members, which the bot reads; the bot itself is made just below.
-  const members = { ownId, listMembers: (groupId: string) => bot.listMembers(groupId) };
-  const bot: SimpleBot = new SimpleBot(api, store, ownId, [new LinkGuardFeature(blockedLinks), new BadWordFilterFeature(bannedWords), new SpamGuardFeature(), new AutoReplyFeature(api, autoReplies, members, activity)], activity);
-  await bot.start();
-  activity.record({ category: "system", actor: "bot", title: "Bot khởi động" });
-  const reminders = new ReminderBoard(api, bot, store, undefined, bot.ownMessages);
-  const reminderMessenger = new ReminderMessenger(api, store, activity, bot.ownMessages);
-  reminderMessenger.start();
-  const approver = new JoinApprover(api, bot, store, activity);
-  approver.start();
-  const welcomer = new Welcomer(api, store, ownId, activity);
-  welcomer.start();
-  // Reminders are created, changed and answered through group events.
-  api.listener.on("group_event", (event) => reminders.forget(event.threadId));
-  const loginCodes = new LoginCodeService(createLoginCodeSender(bot, config));
-  stopBot = (): void => {
-    bot.stop();
-    reminderMessenger.stop();
-    approver.stop();
-    welcomer.stop();
-  };
-  gate.open(createAdminApp(bot, store, blockedLinks, bannedWords, reminders, approver, autoReplies, new PollBoard(api, bot), activity), loginCodes);
+  await sessions.run();
 }
 
 void main().catch((error: unknown) => {
