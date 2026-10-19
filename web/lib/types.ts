@@ -43,6 +43,14 @@ export type GroupCommandRow = { groupId: string; name: string; memberCount: numb
 // What the bot says to people who join the group; the text may hold {name}, {nameCom} and {count}.
 export type GroupWelcomeSettings = { enabled: boolean; text: string };
 
+// Hours when only the owner and deputies may write; `start` and `end` are minutes after midnight on the bot's clock.
+export type QuietHoursSettings = { enabled: boolean; start: number; end: number };
+
+// The bot's place in a group: owner (trưởng nhóm), deputy (phó nhóm) or an ordinary member.
+export type GroupRole = "owner" | "admin" | "member";
+
+export const groupRoleNames: Record<GroupRole, string> = { owner: "trưởng nhóm", admin: "phó nhóm", member: "thành viên" };
+
 export type Group = {
   groupId: string;
   name: string;
@@ -59,7 +67,10 @@ export type Group = {
   commands: GroupCommandSettings;
   welcome: GroupWelcomeSettings;
   kickRules: Record<ViolationRule, KickRule>;
+  quietHours: QuietHoursSettings;
+  // Owner or deputy: the bot can delete messages and change the group's settings.
   botIsAdmin: boolean;
+  botRole: GroupRole;
   updatedAt: number;
 };
 

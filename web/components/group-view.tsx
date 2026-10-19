@@ -7,12 +7,13 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import useSWR, { useSWRConfig } from "swr";
 import { ApiError, errorText, send } from "@/lib/api";
 import { cn, formatDateTime, formatNumber, splitWindow, windowUnits } from "@/lib/format";
-import { ruleLabels, totalViolations, violationRules, type Group, type GroupToggle, type KickRule, type MemberViolations, type RateRule, type SpamSettings, type AutoReplyRule, type PendingJoinList, type ViolationMessage, type ViolationRule } from "@/lib/types";
+import { groupRoleNames, ruleLabels, totalViolations, violationRules, type Group, type GroupToggle, type KickRule, type MemberViolations, type RateRule, type SpamSettings, type AutoReplyRule, type PendingJoinList, type ViolationMessage, type ViolationRule } from "@/lib/types";
 import { AutoReplyManager } from "./auto-replies-view";
 import { ConfirmDialog } from "./confirm-dialog";
 import { JoinApprovalCard, PendingMembers } from "./group-approvals";
 import { GroupZaloSettings } from "./group-zalo-settings";
 import { GroupCommands } from "./group-commands";
+import { GroupQuietHours } from "./group-quiet-hours";
 import { GroupWelcome } from "./group-welcome";
 import { GroupMembers } from "./group-members";
 import { ListManager } from "./list-manager";
@@ -44,7 +45,7 @@ function BotSwitch({ group, onChange }: { group: Group; onChange: (group: Group)
     <div className="flex items-center gap-3 rounded-lg border border-border bg-surface px-3 py-2">
       <span className="text-sm">
         <span className="block font-medium">{group.botEnabled ? "Bot đang bật" : "Bot đang tắt"}</span>
-        <span className="block text-xs text-muted">{group.botIsAdmin ? "Bot là trưởng nhóm" : "Bot là thành viên"}</span>
+        <span className="block text-xs text-muted">Bot là {groupRoleNames[group.botRole]}</span>
       </span>
       <CompactSwitch checked={group.botEnabled} onChange={(value) => toggle("bot", value)} label="Bật bot ở nhóm này" />
     </div>
@@ -214,7 +215,7 @@ function FeatureCard({ group, rule, toggleName, enabled, title, description, onC
         <div className="min-w-0">{children}</div>
         <div className="min-w-0 px-5 py-1">
           <p className="pt-3 text-sm font-medium">Khi có vi phạm</p>
-          <p className="mt-1 text-sm text-muted">{group.botIsAdmin ? "Tin vi phạm bị xóa và được ghi vào thống kê." : "Bot không phải trưởng nhóm nên chỉ ghi nhận vi phạm, không xóa được tin."}</p>
+          <p className="mt-1 text-sm text-muted">{group.botIsAdmin ? "Tin vi phạm bị xóa và được ghi vào thống kê." : "Bot là thành viên thường, không phải trưởng hay phó nhóm, nên chỉ ghi nhận vi phạm, không xóa được tin."}</p>
           <KickSetting
             // Saved numbers remount the form so its fields show the stored values again.
             key={`${kickRule.enabled}-${kickRule.count}-${kickRule.windowSeconds}`}
@@ -537,7 +538,7 @@ function GroupPage({ group, backLink, onChange }: { group: Group; backLink: Reac
         <BotSwitch group={group} onChange={onChange} />
       </header>
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Thành viên" value={formatNumber(group.memberCount)} hint={group.botIsAdmin ? "Bot là trưởng hoặc phó nhóm" : "Bot là thành viên: chỉ ghi nhận"} />
+        <StatTile label="Thành viên" value={formatNumber(group.memberCount)} hint={group.botIsAdmin ? `Bot là ${groupRoleNames[group.botRole]}` : "Bot là thành viên: chỉ ghi nhận"} />
         <StatTile label="Tính năng đang bật" value={`${active.length}/${features.length}`} hint={active.length === 0 ? (group.botEnabled ? "Chưa bật tính năng nào" : "Bot đang tắt") : active.map((feature) => feature.name).join(", ")} />
         <StatTile label="Vi phạm" value={violationTotal === undefined ? pending : formatNumber(violationTotal)} hint={records === undefined ? undefined : `${formatNumber(records.length)} thành viên từng vi phạm`} />
         <StatTile label="Đã kick" value={kickTotal === undefined ? pending : formatNumber(kickTotal)} hint={kicking.length === 0 ? "Chưa tính năng nào bật kick" : `Đang kick: ${kicking.map((feature) => feature.name).join(", ")}`} />
@@ -578,7 +579,10 @@ function GroupPage({ group, backLink, onChange }: { group: Group; backLink: Reac
       ) : tab === "pending" ? (
         <PendingMembers group={group} />
       ) : tab === "zalo" ? (
-        <GroupZaloSettings group={group} />
+        <div className="space-y-4">
+          <GroupZaloSettings group={group} />
+          <GroupQuietHours key={`${group.quietHours.start}-${group.quietHours.end}`} group={group} onChange={onChange} />
+        </div>
       ) : (
         <div className="space-y-4"><Statistics group={group} /></div>
       )}

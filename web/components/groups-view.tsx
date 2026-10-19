@@ -8,7 +8,7 @@ import useSWR from "swr";
 import { errorText, send } from "@/lib/api";
 import { cn, formatDateTime, formatNumber } from "@/lib/format";
 import { usePreferences, usePreferencesReady } from "@/lib/preferences";
-import type { BotStatus, Group, GroupActionResult, GroupPage } from "@/lib/types";
+import type { Group, GroupActionResult, GroupPage } from "@/lib/types";
 import { ConfirmDialog } from "./confirm-dialog";
 import { BulkFailures, RowCheckbox, RowNumber, SelectAllCheckbox, SelectionBar, useSelection } from "./selection";
 import { useToast } from "./toast";
@@ -22,7 +22,8 @@ const rowClass = "h-[3.25rem] border-b border-border last:border-0";
 const filters = [
   { value: "all", label: "Tất cả" },
   { value: "enabled", label: "Đang bật bot" },
-  { value: "admin", label: "Bot là trưởng nhóm" },
+  { value: "owner", label: "Bot là trưởng nhóm" },
+  { value: "deputy", label: "Bot là phó nhóm" },
   { value: "member", label: "Bot là thành viên" },
 ] as const;
 // What the page shows when the address names no filter: the groups the bot is at work in.
@@ -65,7 +66,6 @@ export function GroupsView() {
   const [bulkPending, setBulkPending] = useState<BulkAction>();
   const [failures, setFailures] = useState<{ name: string; error: string }[]>([]);
   const [confirmingLeave, setConfirmingLeave] = useState(false);
-  const { data: status } = useSWR<BotStatus>("/status");
 
   const query = searchParams.get("q") ?? "";
   const filter = filters.find((item) => item.value === searchParams.get("filter"))?.value ?? defaultFilter;
@@ -164,7 +164,7 @@ export function GroupsView() {
   }
 
   // The owner of a group cannot leave it until ownership has been handed to someone else in Zalo.
-  const owned = status === undefined ? [] : selection.items.filter((group) => group.creatorId === status.userId);
+  const owned = selection.items.filter((group) => group.botRole === "owner");
   const leavable = selection.items.filter((group) => !owned.includes(group));
 
   async function syncFromZalo() {
@@ -287,7 +287,7 @@ export function GroupsView() {
                     <td className="px-5">
                       <CompactSwitch checked={group.botEnabled} onChange={(value) => setBotEnabled(group, value)} label={`Bật bot ở nhóm ${group.name || group.groupId}`} />
                     </td>
-                    <td className="px-5">{group.botIsAdmin ? <Badge tone="success">Trưởng nhóm</Badge> : <Badge>Thành viên</Badge>}</td>
+                    <td className="px-5">{group.botRole === "owner" ? <Badge tone="success">Trưởng nhóm</Badge> : group.botRole === "admin" ? <Badge tone="success">Phó nhóm</Badge> : <Badge>Thành viên</Badge>}</td>
                     <td className="px-5"><RuleBadges group={group} /></td>
                     <td className="truncate px-5 tabular-nums text-muted">{formatDateTime(group.updatedAt)}</td>
                   </tr>
