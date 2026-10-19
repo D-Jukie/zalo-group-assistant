@@ -165,6 +165,17 @@ Bot mở API ngay khi khởi động, trước cả khi đăng nhập Zalo, đ�
 - Khi bot mất phiên Zalo, trình duyệt đã được ghi nhớ không phải nhập lại mã PIN hay mã xác thực: trang chỉ hiện mã QR để đăng nhập lại cho bot, quét xong là vào bảng điều khiển. Trình duyệt chưa được ghi nhớ vẫn đi đủ ba bước.
 - Nếu mở trang ra ngoài máy này, hãy đặt sau HTTPS.
 
+### Đổi tài khoản Zalo của bot
+
+Trang `Cài đặt` có thẻ `Tài khoản Zalo của bot` với nút `Đăng xuất Zalo`. Nút này khác với `Đăng xuất` của trang quản trị: nó đăng xuất tài khoản Zalo đang chạy bot, không đăng xuất bạn.
+
+- Bot ngừng hoạt động ở mọi nhóm, xóa phiên Zalo đã lưu trong MongoDB và trang chuyển sang mã QR. Quét bằng tài khoản khác (hoặc lại tài khoản cũ) là bot chạy tiếp, không cần khởi động lại bot và không phải nhập lại mã PIN.
+- Tài khoản mới phải khác tài khoản quản trị nhận mã đăng nhập.
+- Cài đặt, danh sách, nhật ký và lịch sử được giữ nguyên. Trang Nhóm chỉ hiện các nhóm tài khoản mới đang tham gia; nhóm nào cả hai tài khoản cùng ở thì dùng lại cài đặt cũ.
+- zca-js không có lệnh đăng xuất phía Zalo, nên bot chỉ ngắt kết nối và không bao giờ dùng lại phiên cũ. Nếu muốn chắc chắn, hãy đăng xuất phiên đó từ ứng dụng Zalo của tài khoản cũ.
+- Chỉ trình duyệt đã đăng nhập đủ ba bước mới đăng xuất Zalo được. Các tab dashboard khác đang mở tự chuyển sang trang mã QR khi mã xuất hiện. Bot chỉ khởi động lại (ví dụ `npm run dev` chạy lại sau khi sửa mã) thì các trang đang mở không bị chuyển đi, nên bản nháp đang soạn không mất.
+- Nếu bot không khởi động được sau khi đăng nhập (ví dụ Zalo không trả danh sách nhóm), lỗi được ghi vào `Lịch sử hoạt động` và bot thử lại sau 30 giây thay vì tắt hẳn.
+
 ## Link bị chặn thêm
 
 Ngoài link mời nhóm Zalo (luôn bị chặn), trang `/features` có mục `Link bị chặn chung` để thêm/xóa các trang web khác. Danh sách dùng chung cho mọi nhóm đang bật `Chặn link` và lưu trong MongoDB (collection `settings`).
@@ -420,7 +431,7 @@ Trang `Lịch sử hoạt động` ghi lại từng việc đã xảy ra, mới 
 | Trả lời tự động | Mỗi lần bot trả lời một từ khóa, một lệnh hay `/random`; thêm, sửa, bật, tắt, xóa câu trả lời; đổi cài đặt `/random` |
 | Tin nhắn và nhắc hẹn | Tạo và xóa nhắc hẹn, gửi tin ngay, hẹn giờ tin, sửa và hủy tin chờ gửi; bot gửi tin khi đến giờ, hoặc bỏ qua vì bot không chạy hay nhóm đang tắt bot |
 | Cài đặt | Bật tắt bot và từng tính năng của nhóm, rời nhóm, cài đặt chống spam, quy tắc mời ra khỏi nhóm, thêm và xóa link bị chặn, từ cấm |
-| Hệ thống | Bot khởi động, kết nối và mất kết nối Zalo, gửi mã đăng nhập, đăng nhập và đăng xuất trang quản trị, đồng bộ danh sách nhóm |
+| Hệ thống | Bot khởi động (kèm tên và ID tài khoản Zalo), kết nối và mất kết nối Zalo, đăng xuất tài khoản Zalo của bot, gửi mã đăng nhập, đăng nhập và đăng xuất trang quản trị, đồng bộ danh sách nhóm |
 
 - Tìm theo tên hoạt động, nội dung, lý do lỗi, tên nhóm, tên hoặc ID thành viên; gõ không dấu cũng khớp chữ có dấu. Lọc theo loại, người thực hiện (bot tự làm hay quản trị viên), kết quả và khoảng ngày giờ. Mặc định là 30 ngày gần nhất; mọi bộ lọc nằm trên địa chỉ trang.
 - `Chỉ xem nhóm này` trên một dòng thu hẹp về một nhóm. Trang của mỗi nhóm có liên kết `Lịch sử hoạt động` mở sẵn lịch sử của nhóm đó.
