@@ -3,10 +3,12 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import useSWR from "swr";
-import { send } from "@/lib/api";
+import { errorText, send } from "@/lib/api";
 import { cn, formatDateTime } from "@/lib/format";
 import { pageSizeOptions, refreshOptions, setPreferences, themeOptions, usePreferences } from "@/lib/preferences";
 import type { BotStatus } from "@/lib/types";
+import { ConfirmDialog } from "./confirm-dialog";
+import { useToast } from "./toast";
 import { Badge, Button, Card, CardHeader, PageHeader, Skeleton } from "./ui";
 
 function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
@@ -80,11 +82,41 @@ function Connection() {
   return (
     <Card>
       <CardHeader title="Kết nối tới bot" description="Bảng điều khiển lấy mọi dữ liệu từ API của bot. Địa chỉ API đặt bằng biến BOT_API_URL khi chạy bảng điều khiển." />
-      <div className="divide-y divide-border px-5">
+      <div className="px-5">
         <Row label="API của bot">
           {status ? <Badge tone="success">Hoạt động</Badge> : error ? <Badge tone="danger">Không phản hồi</Badge> : <Skeleton className="h-5 w-20" />}
         </Row>
-        <Row label="Tài khoản Zalo của bot">
+      </div>
+    </Card>
+  );
+}
+
+// The Zalo account the bot runs on. Signing it out stops the bot until an account is signed in by QR
+// code, which is how the bot moves to another account. The admin's own sign-in is the card below.
+function BotAccount() {
+  const router = useRouter();
+  const toast = useToast();
+  const { data: status } = useSWR<BotStatus>("/status");
+  const [confirming, setConfirming] = useState(false);
+  const [pending, setPending] = useState(false);
+
+  async function signOut() {
+    setPending(true);
+    try {
+      await send("POST", "/auth/bot/logout");
+      router.replace("/login");
+    } catch (exception) {
+      setPending(false);
+      setConfirming(false);
+      toast.error(errorText(exception));
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader title="Tài khoản Zalo của bot" />
+      <div className="divide-y divide-border px-5">
+        <Row label="Tài khoản">
           {status ? <span className="text-sm" translate="no">{status.displayName || "Bot"} · <span className="font-mono text-muted">{status.userId}</span></span> : <Skeleton className="h-5 w-40" />}
         </Row>
         <Row label="Kết nối Zalo">
@@ -95,7 +127,21 @@ function Connection() {
             </span>
           ) : <Skeleton className="h-5 w-40" />}
         </Row>
+        <Row label="Đổi tài khoản bot" hint="Đăng xuất Zalo khỏi bot rồi quét mã QR bằng tài khoản khác. Phiên đăng nhập trang quản trị của bạn vẫn giữ nguyên.">
+          <Button variant="danger" onClick={() => setConfirming(true)}>Đăng xuất Zalo</Button>
+        </Row>
       </div>
+      <ConfirmDialog
+        open={confirming}
+        title="Đăng xuất Zalo khỏi bot?"
+        confirmLabel="Đăng xuất Zalo"
+        pending={pending}
+        onConfirm={() => void signOut()}
+        onCancel={() => setConfirming(false)}
+      >
+        <p>Bot ngừng hoạt động ở mọi nhóm cho tới khi có tài khoản đăng nhập lại. Trang sẽ chuyển sang mã QR để bạn quét bằng tài khoản mới, tài khoản này phải khác tài khoản Zalo quản trị nhận mã đăng nhập.</p>
+        <p className="mt-2">Cài đặt, danh sách và nhật ký được giữ nguyên. Nhóm nào tài khoản mới cũng tham gia sẽ dùng lại cài đặt cũ của nhóm đó.</p>
+      </ConfirmDialog>
     </Card>
   );
 }
@@ -105,9 +151,9 @@ function Session() {
   const [pending, setPending] = useState(false);
   return (
     <Card>
-      <CardHeader title="Phiên đăng nhập" />
+      <CardHeader title="Phiên đăng nhập trang quản trị" />
       <div className="px-5">
-        <Row label="Đăng xuất khỏi trình duyệt này" hint="Phiên bị hủy ngay; lần sau cần mã mới gửi qua Zalo.">
+        <Row label="Đăng xuất khỏi trình duyệt này" hint="Chỉ đăng xuất bạn khỏi trang quản trị, bot vẫn chạy. Lần sau cần mã mới gửi qua Zalo.">
           <Button
             variant="danger"
             pending={pending}
@@ -136,6 +182,7 @@ export function SettingView() {
         </div>
         <div className="space-y-4">
           <Connection />
+          <BotAccount />
           <Session />
         </div>
       </div>

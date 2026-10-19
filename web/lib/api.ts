@@ -4,17 +4,19 @@ export class ApiError extends Error {
   }
 }
 
-// Calls the bot API through this app's /api proxy. An expired session sends the browser to the login page.
+// Calls the bot API through this app's /api proxy. An expired session sends the browser to the login
+// page, and so does a bot that has been signed out of Zalo, where that page shows the QR code.
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api${path}`, {
     ...init,
     cache: "no-store",
     headers: { "content-type": "application/json", ...init?.headers },
   });
-  if (response.status === 401 && typeof window !== "undefined" && window.location.pathname !== "/login") {
+  const body: unknown = (response.headers.get("content-type") ?? "").includes("json") ? await response.json() : undefined;
+  const botSignedOut = response.status === 503 && typeof body === "object" && body !== null && "code" in body && body.code === "bot-signed-out";
+  if ((response.status === 401 || botSignedOut) && typeof window !== "undefined" && window.location.pathname !== "/login") {
     window.location.assign("/login");
   }
-  const body: unknown = (response.headers.get("content-type") ?? "").includes("json") ? await response.json() : undefined;
   if (!response.ok) {
     const message = typeof body === "object" && body !== null && "error" in body && typeof body.error === "string"
       ? body.error
