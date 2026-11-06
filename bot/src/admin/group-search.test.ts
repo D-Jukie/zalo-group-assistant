@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { defaultGroupCommands, defaultGroupWelcome, defaultJoinApproval, defaultKickRules, defaultQuietHours, defaultSpamSettings, type AdminGroupView } from "../types.js";
+import { defaultGroupCommands, defaultGroupWelcome, defaultJoinApproval, defaultKickRules, defaultQuietHours, defaultSpamSettings, defaultImageGuardSettings, type AdminGroupView } from "../types.js";
 import { searchGroups, summarizeGroups, type GroupQuery } from "./group-search.js";
 
 function group(groupId: string, name: string, overrides: Partial<AdminGroupView> = {}): AdminGroupView {
@@ -14,7 +14,9 @@ function group(groupId: string, name: string, overrides: Partial<AdminGroupView>
     linkGuardEnabled: false,
     badWordFilterEnabled: false,
     spamGuardEnabled: false,
+    imageGuardEnabled: false,
     spamSettings: defaultSpamSettings,
+    imageSettings: defaultImageGuardSettings,
     joinApproval: defaultJoinApproval,
     commands: defaultGroupCommands,
     welcome: defaultGroupWelcome,
@@ -88,5 +90,12 @@ await test("clamps a page past the end to the last page", () => {
 
 await test("summarises the groups for the dashboard", () => {
   // Groups 300 and 400 have a feature set but the bot off, and group 200 kicks on paper but the bot is not an admin there.
-  assert.deepEqual(summarizeGroups(groups), { total: 6, botAdmin: 3, enabled: 3, linkGuard: 2, badWordFilter: 1, spamGuard: 1, kicking: 2 });
+  assert.deepEqual(summarizeGroups(groups), { total: 6, botAdmin: 3, enabled: 3, linkGuard: 2, badWordFilter: 1, spamGuard: 1, imageGuard: 0, kicking: 2 });
+});
+
+await test("a group that only records sensitive images is not counted as kicking for them", () => {
+  const kickImages = { ...defaultKickRules, image: { enabled: true, count: 2, windowSeconds: 86_400 } };
+  const recordOnly = group("700", "Nhóm ảnh", { botIsAdmin: true, botRole: "owner", botEnabled: true, imageGuardEnabled: true, kickRules: kickImages });
+  const deleting = group("800", "Nhóm ảnh 2", { botIsAdmin: true, botRole: "owner", botEnabled: true, imageGuardEnabled: true, imageSettings: { threshold: 85, deleteMessage: true }, kickRules: kickImages });
+  assert.deepEqual(summarizeGroups([recordOnly, deleting]), { total: 2, botAdmin: 2, enabled: 2, linkGuard: 0, badWordFilter: 0, spamGuard: 0, imageGuard: 2, kicking: 1 });
 });

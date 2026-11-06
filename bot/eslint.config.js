@@ -22,6 +22,11 @@ export default tseslint.config(
     },
   },
   {
+    // Plain Node scripts run by npm, such as the model download.
+    files: ["scripts/**/*.mjs"],
+    languageOptions: { globals: { console: "readonly", fetch: "readonly", process: "readonly" } },
+  },
+  {
     ignores: ["dist/**", "node_modules/**", "coverage/**"],
   },
 );

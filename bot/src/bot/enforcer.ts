@@ -1,5 +1,6 @@
 import { ThreadType, type API, type Message } from "zca-js";
 import { noActivity, type ActivityRecorder } from "../activity/activity-log.js";
+import type { ReportOptions } from "./feature.js";
 import { writeLog } from "../logger.js";
 import type { Store } from "../storage/store.js";
 import { violationRuleNames, type StoredGroup, type ViolationRule } from "../types.js";
@@ -47,7 +48,7 @@ export class Enforcer {
 
   // Returns the reportViolation function for one message. A message that breaks several rules is
   // deleted once and counts once for each rule it broke.
-  public forMessage(target: MessageTarget): (rule: ViolationRule, detail: string) => Promise<void> {
+  public forMessage(target: MessageTarget): (rule: ViolationRule, detail: string, options?: ReportOptions) => Promise<void> {
     const { message, group, botIsAdmin } = target;
     const groupId = message.threadId;
     const userId = message.data.uidFrom;
@@ -55,16 +56,18 @@ export class Enforcer {
     let deletion: Promise<boolean> | undefined;
     let counted = false;
 
-    return async (rule, detail) => {
+    return async (rule, detail, options) => {
       if (!counted) {
         counted = true;
         this.handledMessages += 1;
       }
       // Deleting needs admin rights. It starts right away and does not wait for the database,
       // so a slow or failing database never leaves the message in the group.
-      if (botIsAdmin) deletion ??= this.deleteMessage(message, messageId, rule, detail);
+      // A feature may ask for the message to be recorded only; it then counts towards no kick either.
+      const mayDelete = botIsAdmin && options?.deleteMessage !== false;
+      if (mayDelete) deletion ??= this.deleteMessage(message, messageId, rule, detail);
       const kickRule = group.kickRules[rule];
-      const canKick = botIsAdmin && kickRule.enabled;
+      const canKick = mayDelete && kickRule.enabled;
       let recent: number | undefined;
       try {
         await this.store.recordViolation(groupId, userId, message.data.dName, rule);

@@ -18,6 +18,7 @@ export type GroupSummary = Readonly<{
   linkGuard: number;
   badWordFilter: number;
   spamGuard: number;
+  imageGuard: number;
   kicking: number;
 }>;
 
@@ -42,7 +43,9 @@ function isKicking(group: AdminGroupView): boolean {
   return group.botIsAdmin
     && ((group.linkGuardEnabled && group.kickRules.link.enabled)
       || (group.badWordFilterEnabled && group.kickRules.badWord.enabled)
-      || (group.spamGuardEnabled && group.kickRules.spam.enabled));
+      || (group.spamGuardEnabled && group.kickRules.spam.enabled)
+      // A photo that is only recorded never counts towards a kick.
+      || (group.imageGuardEnabled && group.imageSettings.deleteMessage && group.kickRules.image.enabled));
 }
 
 // One page of the groups whose name contains the text, or whose ID contains it when the text is a
@@ -72,6 +75,7 @@ export function summarizeGroups(groups: readonly AdminGroupView[]): GroupSummary
     linkGuard: enabled.filter((group) => group.linkGuardEnabled).length,
     badWordFilter: enabled.filter((group) => group.badWordFilterEnabled).length,
     spamGuard: enabled.filter((group) => group.spamGuardEnabled).length,
+    imageGuard: enabled.filter((group) => group.imageGuardEnabled).length,
     kicking: enabled.filter(isKicking).length,
   };
 }

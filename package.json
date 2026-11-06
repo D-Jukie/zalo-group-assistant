@@ -6,6 +6,7 @@
   "description": "A Zalo group assistant: the bot in bot/, its dashboard in web/.",
   "scripts": {
     "install:all": "npm --prefix bot install && npm --prefix web install",
+    "model": "npm --prefix bot run model",
     "dev:bot": "npm --prefix bot run dev",
     "dev:web": "npm --prefix web run dev",
     "build": "npm --prefix bot run build && npm --prefix web run build",

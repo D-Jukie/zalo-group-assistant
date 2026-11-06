@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ThreadType, type Message } from "zca-js";
 import type { NewActivity } from "../types.js";
-import { defaultKickRules, defaultGroupCommands, defaultGroupWelcome, defaultQuietHours, defaultJoinApproval, defaultSpamSettings, type KickRules, type StoredGroup } from "../types.js";
+import { defaultKickRules, defaultGroupCommands, defaultGroupWelcome, defaultQuietHours, defaultJoinApproval, defaultSpamSettings, defaultImageGuardSettings, type KickRules, type StoredGroup } from "../types.js";
 import { Enforcer, type EnforcerApi, type EnforcerStore } from "./enforcer.js";
 
 type Scenario = Readonly<{
@@ -61,7 +61,9 @@ function setup(scenario: Scenario = {}) {
     linkGuardEnabled: true,
     badWordFilterEnabled: true,
     spamGuardEnabled: true,
+    imageGuardEnabled: true,
     spamSettings: defaultSpamSettings,
+    imageSettings: defaultImageGuardSettings,
     joinApproval: defaultJoinApproval,
     commands: defaultGroupCommands,
     welcome: defaultGroupWelcome, quietHours: defaultQuietHours, quietHoursState: null,
@@ -92,7 +94,23 @@ await test("kicking is off for every feature by default", () => {
     link: { enabled: false, count: 3, windowSeconds: 10 },
     badWord: { enabled: false, count: 3, windowSeconds: 600 },
     spam: { enabled: false, count: 3, windowSeconds: 60 },
+    image: { enabled: false, count: 2, windowSeconds: 86_400 },
   });
+});
+
+await test("a violation reported to be recorded only is neither deleted nor counted towards a kick", async () => {
+  const imagesAt1: KickRules = { ...neverKick, image: { enabled: true, count: 1, windowSeconds: 86_400 } };
+  const { calls, report } = setup({ kickRules: imagesAt1, recent: 5 });
+  await report("image", "97%", { deleteMessage: false });
+  assert.deepEqual(calls, ["record:image", "log:image:hello"]);
+});
+
+await test("a violation reported with deleteMessage is deleted and can lead to a kick", async () => {
+  const imagesAt1: KickRules = { ...neverKick, image: { enabled: true, count: 1, windowSeconds: 86_400 } };
+  const { calls, report } = setup({ kickRules: imagesAt1, recent: 1 });
+  await report("image", "97%", { deleteMessage: true });
+  assert.ok(calls.includes("delete"));
+  assert.deepEqual(calls.slice(-2), ["kick", "recordKick"]);
 });
 
 await test("a feature kicks with its own count and window, and only that feature", async () => {

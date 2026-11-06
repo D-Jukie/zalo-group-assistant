@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { defaultGroupCommands, defaultGroupWelcome, defaultJoinApproval, defaultKickRules, defaultSpamSettings, type NewActivity, type QuietHoursSettings, type QuietHoursState, type StoredGroup } from "../types.js";
+import { defaultGroupCommands, defaultGroupWelcome, defaultJoinApproval, defaultKickRules, defaultSpamSettings, defaultImageGuardSettings, type NewActivity, type QuietHoursSettings, type QuietHoursState, type StoredGroup } from "../types.js";
 import { QuietHoursKeeper } from "./quiet-hours-keeper.js";
 import { describeQuietHours, parseQuietHours, quietWindow } from "./quiet-hours.js";
 
@@ -41,7 +41,7 @@ function setup(options: Readonly<{ locked?: boolean; inGroup?: boolean; refuse?:
   const group: { current: StoredGroup } = {
     current: {
       groupId: "g1", name: "Lớp A", creatorId: "owner", adminIds: ["bot"], memberCount: 20, botEnabled: options.botEnabled ?? true,
-      linkGuardEnabled: false, badWordFilterEnabled: false, spamGuardEnabled: false, spamSettings: defaultSpamSettings, joinApproval: defaultJoinApproval,
+      linkGuardEnabled: false, badWordFilterEnabled: false, spamGuardEnabled: false, imageGuardEnabled: false, spamSettings: defaultSpamSettings, imageSettings: defaultImageGuardSettings, joinApproval: defaultJoinApproval,
       commands: defaultGroupCommands, welcome: defaultGroupWelcome, kickRules: defaultKickRules, updatedAt: 0,
       quietHours: { enabled: true, ...night, ...options.quietHours }, quietHoursState: options.state ?? null,
     },

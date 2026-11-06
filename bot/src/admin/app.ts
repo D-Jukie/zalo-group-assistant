@@ -9,6 +9,7 @@ import type { SimpleBot } from "../bot/simple-bot.js";
 import { describeSettingsChange, parseZaloSettingsChange } from "../bot/zalo-settings.js";
 import type { BannedWords } from "../moderation/banned-words.js";
 import type { BlockedLinks } from "../moderation/blocked-links.js";
+import type { ImageClassifier } from "../moderation/image-classifier.js";
 import { parseMessageRequest, parseReminderMessageEdit, parseReminderRequest } from "../reminders/reminder.js";
 import { parsePollRequest } from "../polls/poll.js";
 import type { PollBoard } from "../polls/poll-board.js";
@@ -16,7 +17,7 @@ import type { ReminderBoard } from "../reminders/reminder-board.js";
 import { describeQuietHours, parseQuietHours } from "../quiet-hours/quiet-hours.js";
 import { parseWelcomeSettings } from "../welcome/welcome.js";
 import type { Store } from "../storage/store.js";
-import { violationMessageStatuses, violationRuleNames, violationRules, type ActivityCategory, type NewActivity, type GroupMember, type GroupSetting, type RateRule, type ViolationLogFilter, type ViolationRule, type ReminderCreateResult } from "../types.js";
+import { maxImageThreshold, minImageThreshold, violationMessageStatuses, violationRuleNames, violationRules, type ActivityCategory, type NewActivity, type GroupMember, type GroupSetting, type RateRule, type ViolationLogFilter, type ViolationRule, type ReminderCreateResult } from "../types.js";
 import { maxSpamWindowSeconds } from "../moderation/spam-detector.js";
 import { isRecord, now } from "../utils.js";
 import { groupFilters, searchGroups, summarizeGroups, type GroupFilter } from "./group-search.js";
@@ -30,6 +31,7 @@ const groupToggles: ReadonlyMap<string, GroupSetting> = new Map([
   ["links", "linkGuardEnabled"],
   ["bad-words", "badWordFilterEnabled"],
   ["spam", "spamGuardEnabled"],
+  ["images", "imageGuardEnabled"],
 ]);
 const maxKickCount = 100;
 const maxKickWindowSeconds = 7 * 24 * 60 * 60;
@@ -42,7 +44,7 @@ const activityPageSize = 50;
 const sentBatchListSize = 50;
 const pollListSize = 50;
 // What each per-group switch is called in the history.
-const groupSettingNames: Readonly<Record<GroupSetting, string>> = { botEnabled: "bot", linkGuardEnabled: "chặn link", badWordFilterEnabled: "lọc từ cấm", spamGuardEnabled: "chống spam" };
+const groupSettingNames: Readonly<Record<GroupSetting, string>> = { botEnabled: "bot", linkGuardEnabled: "chặn link", badWordFilterEnabled: "lọc từ cấm", spamGuardEnabled: "chống spam", imageGuardEnabled: "chặn ảnh nhạy cảm" };
 const defaultGroupPageSize = 25;
 const maxGroupPageSize = 100;
 const maxSearchLength = 100;
@@ -134,7 +136,7 @@ function registerListRoutes(app: Express, store: Store, base: string, field: str
 }
 
 // The JSON API behind the dashboard in web/. It serves no pages of its own.
-export function createAdminApp(bot: SimpleBot, store: Store, blockedLinks: BlockedLinks, bannedWords: BannedWords, reminders: ReminderBoard, approver: JoinApprover, autoReplies: AutoReplies, polls: PollBoard, activity: ActivityRecorder = noActivity): Express {
+export function createAdminApp(bot: SimpleBot, store: Store, blockedLinks: BlockedLinks, bannedWords: BannedWords, reminders: ReminderBoard, approver: JoinApprover, autoReplies: AutoReplies, polls: PollBoard, activity: ActivityRecorder = noActivity, imageModel: Pick<ImageClassifier, "status"> = { status: { state: "missing", modelPath: "" } }): Express {
   const app = express();
   // What an admin does from the dashboard goes into the history, next to what the bot does by itself.
   const logAdmin = (category: ActivityCategory, title: string, more: Omit<NewActivity, "category" | "actor" | "title"> = {}): void => activity.record({ category, actor: "admin", title, ...more });
@@ -338,6 +340,26 @@ export function createAdminApp(bot: SimpleBot, store: Store, blockedLinks: Block
     const rate = (value: RateRule): string => value.enabled ? `${value.count} trong ${value.windowSeconds} giây` : "tắt";
     logAdmin("settings", "Đổi cài đặt chống spam", { groupId: request.params.groupId, detail: `Gửi dồn dập: ${rate(flood)}; lặp nội dung: ${rate(repeat)}; số điện thoại hoặc số tài khoản: ${contact.enabled ? "bật" : "tắt"}` });
     response.json(await bot.getGroup(request.params.groupId) ?? updated);
+  });
+  app.patch("/api/groups/:groupId/image-settings", async (request, response) => {
+    const body: unknown = request.body;
+    const threshold = isRecord(body) ? body.threshold : undefined;
+    const deleteMessage = isRecord(body) ? body.deleteMessage : undefined;
+    if (!isIntegerBetween(threshold, minImageThreshold, maxImageThreshold) || typeof deleteMessage !== "boolean") {
+      response.status(400).json({ error: `Ngưỡng phải là số nguyên từ ${minImageThreshold} đến ${maxImageThreshold}` });
+      return;
+    }
+    const updated = await store.setImageGuardSettings(request.params.groupId, { threshold, deleteMessage });
+    if (updated === undefined) {
+      response.status(404).json({ error: "Không tìm thấy nhóm" });
+      return;
+    }
+    logAdmin("settings", "Đổi cài đặt chặn ảnh nhạy cảm", { groupId: request.params.groupId, detail: `Ngưỡng ${threshold}%, ${deleteMessage ? "xóa ảnh" : "chỉ ghi nhận"}` });
+    response.json(await bot.getGroup(request.params.groupId) ?? updated);
+  });
+  // Whether the image model is there to check photos, so the dashboard can say why it does nothing.
+  app.get("/api/image-guard", (_request, response) => {
+    response.json({ state: imageModel.status.state, ...(imageModel.status.error === undefined ? {} : { error: imageModel.status.error }) });
   });
   // The bot's own commands across the groups the bot is on in, for the page that sets them up in one place.
   // A command cannot answer where the bot is off, so those groups are left out.

@@ -1,6 +1,8 @@
 import type { Message } from "zca-js";
 import type { LiveGroupInfo, StoredGroup, ViolationRule } from "../types.js";
 
+export type ReportOptions = Readonly<{ deleteMessage?: boolean }>;
+
 export type GroupMessageContext = Readonly<{
   message: Message;
   groupId: string;
@@ -11,8 +13,9 @@ export type GroupMessageContext = Readonly<{
   botIsAdmin: boolean;
   // Records that the sender broke a rule. The bot then deletes the message and, once the group's
   // threshold is reached, removes the sender; without admin rights it only keeps the record.
-  // detail is what was found (the link or the word) and is only used in the log.
-  reportViolation: (rule: ViolationRule, detail: string) => Promise<void>;
+  // detail is what was found (the link or the word) and is only used in the log. With deleteMessage
+  // false the message is only recorded, never deleted, and does not count towards a kick.
+  reportViolation: (rule: ViolationRule, detail: string, options?: ReportOptions) => Promise<void>;
 }>;
 
 export interface BotFeature {

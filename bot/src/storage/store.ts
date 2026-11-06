@@ -1,6 +1,6 @@
 import { MongoClient, ObjectId, type Binary, type Collection, type Filter, type UpdateFilter } from "mongodb";
 import { GroupEventType, type GroupInfo } from "zca-js";
-import { defaultGroupCommands, defaultGroupWelcome, defaultQuietHours, type GroupWelcomeSettings, type QuietHoursSettings, type QuietHoursState, type ActivityEntry, type ActivityFilter, type NewActivity, defaultJoinApproval, defaultKickRules, defaultSpamSettings, violationRules, type AutoReplyDraft, type AutoReplyKind, type GroupCommandSettings, type AutoReplyMatch, type AutoReplyRule, type JoinApprovalSettings, type JoinReview, type DailyViolations, type GroupSetting, type JsonRecord, type KickRule, type KickRules, type MemberViolations, type MessageImage, type PendingReminderMessage, type RecentViolation, type ReminderMessageEdit, type ViolationLogFilter, type ReminderRepeat, type ScheduledReminderMessage, type MessageUrgency, type SentBatch, type SentBatchGroup, type SpamSettings, type StoredGroup, type ViolationMatch, type ViolationMessage, type ViolationMessageStatus, type ViolationRule } from "../types.js";
+import { defaultGroupCommands, defaultGroupWelcome, defaultQuietHours, type GroupWelcomeSettings, type QuietHoursSettings, type QuietHoursState, type ActivityEntry, type ActivityFilter, type NewActivity, defaultJoinApproval, defaultKickRules, defaultSpamSettings, defaultImageGuardSettings, type ImageGuardSettings, violationRules, type AutoReplyDraft, type AutoReplyKind, type GroupCommandSettings, type AutoReplyMatch, type AutoReplyRule, type JoinApprovalSettings, type JoinReview, type DailyViolations, type GroupSetting, type JsonRecord, type KickRule, type KickRules, type MemberViolations, type MessageImage, type PendingReminderMessage, type RecentViolation, type ReminderMessageEdit, type ViolationLogFilter, type ReminderRepeat, type ScheduledReminderMessage, type MessageUrgency, type SentBatch, type SentBatchGroup, type SpamSettings, type StoredGroup, type ViolationMatch, type ViolationMessage, type ViolationMessageStatus, type ViolationRule } from "../types.js";
 import type { EncryptedSecret } from "./secret-box.js";
 import { asNumber, asString, escapeRegExp, isRecord, now, uniqueStrings } from "../utils.js";
 import { maxMessageImagesBytes, totalImageBytes } from "../reminders/reminder.js";
@@ -18,7 +18,9 @@ type GroupDocument = {
   linkGuardEnabled?: boolean;
   badWordFilterEnabled?: boolean;
   spamGuardEnabled?: boolean;
+  imageGuardEnabled?: boolean;
   spamSettings?: Partial<SpamSettings>;
+  imageSettings?: Partial<ImageGuardSettings>;
   joinApproval?: Partial<JoinApprovalSettings>;
   commands?: Partial<{ random: Partial<GroupCommandSettings["random"]> }>;
   welcome?: Partial<GroupWelcomeSettings>;
@@ -264,7 +266,7 @@ export class Store {
           memberCount: info.totalMember,
           updatedAt: now(),
         },
-        $setOnInsert: { botEnabled: false, linkGuardEnabled: false, badWordFilterEnabled: false, spamGuardEnabled: false },
+        $setOnInsert: { botEnabled: false, linkGuardEnabled: false, badWordFilterEnabled: false, spamGuardEnabled: false, imageGuardEnabled: false },
       },
       { upsert: true },
     );
@@ -304,6 +306,10 @@ export class Store {
         contact: { enabled: settings.contact.enabled },
       },
     });
+  }
+
+  public async setImageGuardSettings(groupId: string, settings: ImageGuardSettings): Promise<StoredGroup | undefined> {
+    return this.updateGroup(groupId, { imageSettings: { threshold: settings.threshold, deleteMessage: settings.deleteMessage } });
   }
 
   public async setGroupWelcome(groupId: string, welcome: GroupWelcomeSettings): Promise<StoredGroup | undefined> {
@@ -864,6 +870,7 @@ export class Store {
       link: read("link") ?? (document.linkSpamKickEnabled === true ? legacyLinkKickRule : defaultKickRules.link),
       badWord: read("badWord") ?? defaultKickRules.badWord,
       spam: read("spam") ?? defaultKickRules.spam,
+      image: read("image") ?? defaultKickRules.image,
     };
   }
 
@@ -890,7 +897,9 @@ export class Store {
       linkGuardEnabled: document.linkGuardEnabled ?? false,
       badWordFilterEnabled: document.badWordFilterEnabled ?? false,
       spamGuardEnabled: document.spamGuardEnabled ?? false,
+      imageGuardEnabled: document.imageGuardEnabled ?? false,
       spamSettings: { ...defaultSpamSettings, ...document.spamSettings },
+      imageSettings: { ...defaultImageGuardSettings, ...document.imageSettings },
       joinApproval: { ...defaultJoinApproval, ...document.joinApproval },
       commands: { random: { ...defaultGroupCommands.random, ...document.commands?.random } },
       welcome: { ...defaultGroupWelcome, ...document.welcome },

@@ -3,6 +3,7 @@ dist/
 .env
 coverage/
 qr.png
+bot/models/
 *.log
 .next/
 next-env.d.ts

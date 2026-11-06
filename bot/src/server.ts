@@ -11,10 +11,12 @@ import { SimpleBot } from "./bot/simple-bot.js";
 import { parseConfig, type Config } from "./config.js";
 import { AutoReplyFeature } from "./features/auto-reply.js";
 import { BadWordFilterFeature } from "./features/bad-word-filter.js";
+import { ImageGuardFeature } from "./features/image-guard.js";
 import { LinkGuardFeature } from "./features/link-guard.js";
 import { SpamGuardFeature } from "./features/spam-guard.js";
 import { BannedWords } from "./moderation/banned-words.js";
 import { BlockedLinks } from "./moderation/blocked-links.js";
+import { NsfwImageModel } from "./moderation/image-classifier.js";
 import { PollBoard } from "./polls/poll-board.js";
 import { QuietHoursKeeper } from "./quiet-hours/quiet-hours-keeper.js";
 import { ReminderBoard } from "./reminders/reminder-board.js";
@@ -47,6 +49,10 @@ async function main(): Promise<void> {
   const activity = new ActivityLog(store);
   const blockedLinks = await BlockedLinks.load(store);
   const bannedWords = await BannedWords.load(store);
+  // Loaded once and shared by every session. Without it the bot runs on and photos are not checked.
+  const imageModel = await NsfwImageModel.load(config.imageModelPath);
+  if (imageModel.status.state === "missing") console.warn(`[CONFIG] Chưa có mô hình nhận diện ảnh ở ${config.imageModelPath}; chạy "npm run model" để tải.`);
+  if (imageModel.status.state === "failed") console.warn(`[CONFIG] Không nạp được mô hình nhận diện ảnh: ${imageModel.status.error ?? ""}`);
   const autoReplies = await AutoReplies.load(store);
   if (config.adminEmail === undefined) console.warn("[CONFIG] Chưa đặt ADMIN_EMAIL; không thể đặt mã PIN và mở trang quản trị.");
   const zaloLogin = new ZaloLogin(store, config.credentialsKey);
@@ -59,7 +65,7 @@ async function main(): Promise<void> {
     const ownId = api.getOwnId();
     // "/random" picks from the group's members, which the bot reads; the bot itself is made just below.
     const members = { ownId, listMembers: (groupId: string) => bot.listMembers(groupId) };
-    const bot: SimpleBot = new SimpleBot(api, store, ownId, [new LinkGuardFeature(blockedLinks), new BadWordFilterFeature(bannedWords), new SpamGuardFeature(), new AutoReplyFeature(api, autoReplies, members, activity)], activity);
+    const bot: SimpleBot = new SimpleBot(api, store, ownId, [new LinkGuardFeature(blockedLinks), new BadWordFilterFeature(bannedWords), new SpamGuardFeature(), new ImageGuardFeature(imageModel), new AutoReplyFeature(api, autoReplies, members, activity)], activity);
     const stoppers: (() => void)[] = [];
     const stop = (): void => {
       for (const item of stoppers) item();
@@ -82,7 +88,7 @@ async function main(): Promise<void> {
       stoppers.push(() => quietHours.stop());
       // Reminders are created, changed and answered through group events.
       api.listener.on("group_event", (event) => reminders.forget(event.threadId));
-      const adminApp = createAdminApp(bot, store, blockedLinks, bannedWords, reminders, approver, autoReplies, new PollBoard(api, bot), activity);
+      const adminApp = createAdminApp(bot, store, blockedLinks, bannedWords, reminders, approver, autoReplies, new PollBoard(api, bot), activity, imageModel);
       const loginCodes = new LoginCodeService(createLoginCodeSender(bot, config));
       const account = `${bot.status().displayName || "Bot"} (${ownId})`;
       activity.record({ category: "system", actor: "bot", title: "Bot khởi động", detail: account });

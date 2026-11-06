@@ -7,6 +7,8 @@ export type Config = Readonly<{
   adminZaloId: string | undefined;
   adminZaloPhone: string | undefined;
   adminEmail: string | undefined;
+  // The image model that checks photos for sensitive content, relative to the bot's folder.
+  imageModelPath: string;
 }>;
 
 function optionalEnv(name: string): string | undefined {
@@ -32,5 +34,6 @@ export function parseConfig(): Config {
     adminZaloId: optionalEnv("ADMIN_ZALO_ID"),
     adminZaloPhone: optionalEnv("ADMIN_ZALO_PHONE"),
     adminEmail: optionalEnv("ADMIN_EMAIL")?.toLowerCase(),
+    imageModelPath: optionalEnv("IMAGE_MODEL_PATH") ?? "models/nsfw.onnx",
   };
 }

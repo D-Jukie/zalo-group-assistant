@@ -4,9 +4,9 @@ export type JsonRecord = Record<string, unknown>;
 
 export type LiveGroupInfo = GroupInfo & Readonly<{ memVerList?: readonly string[] }>;
 
-export type ViolationRule = "link" | "badWord" | "spam";
+export type ViolationRule = "link" | "badWord" | "spam" | "image";
 
-export const violationRules: readonly ViolationRule[] = ["link", "badWord", "spam"];
+export const violationRules: readonly ViolationRule[] = ["link", "badWord", "spam", "image"];
 
 // "At least `count` times within `windowSeconds`", with a switch.
 export type RateRule = Readonly<{ enabled: boolean; count: number; windowSeconds: number }>;
@@ -23,6 +23,7 @@ export const defaultKickRules: KickRules = {
   link: { enabled: false, count: 3, windowSeconds: 10 },
   badWord: { enabled: false, count: 3, windowSeconds: 10 * 60 },
   spam: { enabled: false, count: 3, windowSeconds: 60 },
+  image: { enabled: false, count: 2, windowSeconds: 24 * 60 * 60 },
 };
 
 // What the spam guard looks for in a group. Each check has its own switch.
@@ -41,6 +42,16 @@ export const defaultSpamSettings: SpamSettings = {
   repeat: { enabled: true, count: 3, windowSeconds: 60 },
   contact: { enabled: false },
 };
+
+// What the sensitive-image guard does in a group. A photo whose score from the image model (0 to 100,
+// how sure the model is that the picture is sensitive) reaches `threshold` is a violation. The model
+// can be wrong, so by default such a photo is only recorded; `deleteMessage` lets the bot delete it.
+export type ImageGuardSettings = Readonly<{ threshold: number; deleteMessage: boolean }>;
+
+export const minImageThreshold = 50;
+export const maxImageThreshold = 99;
+
+export const defaultImageGuardSettings: ImageGuardSettings = { threshold: 85, deleteMessage: false };
 
 // Who the bot lets into a group by itself, for groups where joining needs an admin's approval.
 export type JoinApprovalSettings = Readonly<{
@@ -95,7 +106,9 @@ export type StoredGroup = Readonly<{
   linkGuardEnabled: boolean;
   badWordFilterEnabled: boolean;
   spamGuardEnabled: boolean;
+  imageGuardEnabled: boolean;
   spamSettings: SpamSettings;
+  imageSettings: ImageGuardSettings;
   joinApproval: JoinApprovalSettings;
   commands: GroupCommandSettings;
   welcome: GroupWelcomeSettings;
@@ -115,7 +128,9 @@ export type AdminGroupView = Readonly<{
   linkGuardEnabled: boolean;
   badWordFilterEnabled: boolean;
   spamGuardEnabled: boolean;
+  imageGuardEnabled: boolean;
   spamSettings: SpamSettings;
+  imageSettings: ImageGuardSettings;
   joinApproval: JoinApprovalSettings;
   commands: GroupCommandSettings;
   welcome: GroupWelcomeSettings;
@@ -145,7 +160,7 @@ export type BotStatus = Readonly<{
 }>;
 
 // The per-group on/off switches.
-export type GroupSetting = "botEnabled" | "linkGuardEnabled" | "badWordFilterEnabled" | "spamGuardEnabled";
+export type GroupSetting = "botEnabled" | "linkGuardEnabled" | "badWordFilterEnabled" | "spamGuardEnabled" | "imageGuardEnabled";
 
 export type ViolationMatch = Readonly<{ rule: ViolationRule; detail: string }>;
 
@@ -424,7 +439,7 @@ export type ReminderMember = Readonly<{ userId: string; name: string }>;
 export type ReminderResponses = Readonly<{ accepted: readonly ReminderMember[]; rejected: readonly ReminderMember[] }>;
 
 // What a rule is called in the history and in messages to admins.
-export const violationRuleNames: Readonly<Record<ViolationRule, string>> = { link: "Link", badWord: "Từ cấm", spam: "Spam" };
+export const violationRuleNames: Readonly<Record<ViolationRule, string>> = { link: "Link", badWord: "Từ cấm", spam: "Spam", image: "Ảnh nhạy cảm" };
 
 // The history of what the bot did by itself and what admins did from the dashboard, by what it was about.
 export const activityCategories = ["moderation", "approval", "replies", "messages", "settings", "system"] as const;

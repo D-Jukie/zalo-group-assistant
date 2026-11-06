@@ -75,7 +75,15 @@ function collectImageUrls(content: unknown): string[] {
   return Array.from(found);
 }
 
-async function downloadImage(url: string): Promise<Buffer | undefined> {
+// The address of a photo message's picture: its `href` (the picture at normal size) when there is one,
+// else the first picture address found in it.
+export function photoUrl(content: unknown): string | undefined {
+  if (typeof content === "object" && content !== null && "href" in content && typeof content.href === "string" && isHttpsUrl(content.href)) return content.href;
+  return collectImageUrls(content)[0];
+}
+
+// The picture at the address, or undefined when it is too large, too slow or cannot be fetched.
+export async function downloadImage(url: string): Promise<Buffer | undefined> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), qrFetchTimeoutMs);
   try {
