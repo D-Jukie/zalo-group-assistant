@@ -33,6 +33,12 @@ Thư mục gốc chỉ có tài liệu, giấy phép và một `package.json` ch
 npm run install:all
 ```
 
+Tính năng chặn ảnh nhạy cảm cần thêm một mô hình nhận diện ảnh (khoảng 87 MB, không nằm trong kho mã). Tải một lần:
+
+```powershell
+npm run model
+```
+
 Chạy mỗi lệnh ở một cửa sổ riêng:
 
 ```powershell
@@ -132,6 +138,7 @@ MONGODB_DATABASE=zalo_bot
 ZALO_CREDENTIALS_KEY=<khóa 32 byte dạng base64>
 ADMIN_ZALO_PHONE=<số điện thoại Zalo của người quản trị>
 ADMIN_EMAIL=<email của người quản trị>
+IMAGE_MODEL_PATH=models/nsfw.onnx   # không bắt buộc
 ```
 
 Cấu hình của bot nằm trong tệp `bot/.env`, tạo theo mẫu `bot/.env.example`. Tạo `ZALO_CREDENTIALS_KEY` một lần rồi đặt vào tệp đó:
@@ -228,6 +235,18 @@ Hai tính năng trên xét nội dung của từng tin; chống spam xét cách 
 - Tin làm vượt ngưỡng (và các tin tiếp theo khi vẫn còn vượt) bị xóa và ghi nhận là vi phạm loại `Spam`, kèm lý do. Các tin trước đó của đợt spam vẫn còn trong nhóm.
 - Nhiều ảnh gửi cùng một lần là một tin: Zalo tách album thành mỗi ảnh một tin, bot gộp lại theo mã album của Zalo, hoặc theo việc các ảnh đến liền nhau trong vòng 3 giây khi không có mã đó.
 - Bộ đếm nằm trong bộ nhớ của bot, nên bắt đầu lại từ đầu mỗi khi bot khởi động lại. Bot chỉ nhớ thời điểm gửi và một mã băm của mỗi tin (không giữ nội dung), và chỉ trong khoảng thời gian mà cài đặt của nhóm đang dùng.
+
+## Chặn ảnh nhạy cảm
+
+Bot cho từng ảnh thành viên gửi vào nhóm qua một mô hình nhận diện ảnh chạy ngay trên máy của bot, nên ảnh không bị gửi cho dịch vụ nào khác. Mỗi nhóm bật riêng trong thẻ `Chặn ảnh nhạy cảm` ở trang `/group/<id>` (mặc định tắt).
+
+- Mô hình là [Falconsai/nsfw_image_detection](https://huggingface.co/Falconsai/nsfw_image_detection) (giấy phép Apache 2.0), bản ONNX nén 8 bit của [onnx-community](https://huggingface.co/onnx-community/nsfw_image_detection-ONNX), chạy bằng `onnxruntime-node`. `npm run model` tải đúng một phiên bản cố định về `bot/models/nsfw.onnx` và kiểm tra mã SHA-256 trước khi dùng.
+- Mô hình cho mỗi ảnh một điểm từ 0 đến 100%. Ảnh có điểm từ ngưỡng trở lên là vi phạm loại `Ảnh nhạy cảm`. Ngưỡng đặt được từ 50 đến 99, mặc định 85.
+- Mặc định bot chỉ ghi nhận ảnh vi phạm, không xóa, để người quản trị xem trong nhật ký vi phạm mô hình có bắt nhầm không. Chọn `Xóa ảnh` để bot xóa (cần bot là trưởng hoặc phó nhóm). Ảnh chỉ được ghi nhận thì không tính để kick.
+- Chỉ ảnh được kiểm tra. Sticker, GIF, video và tệp thì không. Quản trị viên nhóm được bỏ qua. Bot không lưu ảnh, nhật ký chỉ ghi điểm của mô hình.
+- Bot xét lần lượt từng ảnh. Trên máy phát triển (Core i5 thế hệ 13), mỗi ảnh mất khoảng 45 ms và mô hình chiếm thêm khoảng 250 MB RAM. Khi có hơn 20 ảnh đang chờ, ảnh mới bị bỏ qua để bot không bị dồn việc.
+- Mô hình có thể nhầm, nhất là với ảnh đồ bơi, ảnh tập thể hình hay tranh vẽ. Nên chạy ở chế độ chỉ ghi nhận một thời gian, rồi chỉnh ngưỡng trước khi cho bot xóa ảnh.
+- Khi chưa có mô hình hoặc không nạp được, bot vẫn chạy bình thường, chỉ không kiểm tra ảnh, và thẻ trên dashboard báo lý do.
 
 ## Lịch nhắc hẹn
 
@@ -407,10 +426,10 @@ Nhóm lưu từ phiên bản trước, khi chưa có công tắc này, được 
 
 ## Xử lý vi phạm và thống kê
 
-Một tin là vi phạm khi nhóm đang bật bot và bật tính năng tương ứng (`Chặn link`, `Lọc từ cấm` hoặc `Chống spam`), người gửi không phải chủ nhóm/QTV, và nội dung khớp quy tắc đó. Với mỗi vi phạm, bot:
+Một tin là vi phạm khi nhóm đang bật bot và bật tính năng tương ứng (`Chặn link`, `Lọc từ cấm`, `Chống spam` hoặc `Chặn ảnh nhạy cảm`), người gửi không phải chủ nhóm/QTV, và nội dung khớp quy tắc đó. Với mỗi vi phạm, bot:
 
 1. Ghi nhận vào thống kê của nhóm.
-2. Xóa tin nhắn, nếu bot là QTV của nhóm.
+2. Xóa tin nhắn, nếu bot là QTV của nhóm (với ảnh nhạy cảm, chỉ khi nhóm chọn `Xóa ảnh`).
 3. Kick người gửi, nếu tính năng đó đang bật kick ở nhóm, bot là QTV, và người đó đã vi phạm đúng tính năng đó đủ số lần trong khoảng thời gian đã đặt.
 
 Việc xóa tin không chờ cơ sở dữ liệu: nếu MongoDB lỗi, tin vẫn bị xóa, chỉ có phần ghi nhận và kick của tin đó bị bỏ qua (console in `[VIOLATION RECORD FAILED]`).
@@ -465,4 +484,4 @@ npm test
 
 Dự án phát hành theo [giấy phép MIT](LICENSE): bạn được dùng, sửa và phân phối lại mã nguồn, miễn là giữ thông báo bản quyền và nội dung giấy phép.
 
-Các thư viện mà dự án sử dụng giữ giấy phép riêng của chúng (MIT, Apache 2.0, BSD, ISC). `zca-js` là thư viện không chính thức, không thuộc Zalo.
+Các thư viện mà dự án sử dụng giữ giấy phép riêng của chúng (MIT, Apache 2.0, BSD, ISC). Mô hình nhận diện ảnh tải bằng `npm run model` theo giấy phép Apache 2.0. `zca-js` là thư viện không chính thức, không thuộc Zalo.
