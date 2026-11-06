@@ -31,13 +31,14 @@ const defaultFilter = "enabled";
 
 function RuleBadges({ group }: { group: Group }) {
   if (!group.botEnabled) return <span className="text-sm text-subtle">—</span>;
-  if (!group.linkGuardEnabled && !group.badWordFilterEnabled && !group.spamGuardEnabled) return <span className="block truncate text-sm text-subtle">Chưa bật tính năng nào</span>;
+  if (!group.linkGuardEnabled && !group.badWordFilterEnabled && !group.spamGuardEnabled && !group.imageGuardEnabled) return <span className="block truncate text-sm text-subtle">Chưa bật tính năng nào</span>;
   return (
     <span className="flex gap-1.5 overflow-hidden">
       {group.linkGuardEnabled ? <Badge tone="success">Chặn link</Badge> : null}
       {group.badWordFilterEnabled ? <Badge tone="success">Lọc từ cấm</Badge> : null}
       {group.spamGuardEnabled ? <Badge tone="success">Chống spam</Badge> : null}
-      {group.botIsAdmin && ((group.linkGuardEnabled && group.kickRules.link.enabled) || (group.badWordFilterEnabled && group.kickRules.badWord.enabled) || (group.spamGuardEnabled && group.kickRules.spam.enabled)) ? <Badge tone="warning">Kick</Badge> : null}
+      {group.imageGuardEnabled ? <Badge tone="success">Chặn ảnh</Badge> : null}
+      {group.botIsAdmin && ((group.linkGuardEnabled && group.kickRules.link.enabled) || (group.badWordFilterEnabled && group.kickRules.badWord.enabled) || (group.spamGuardEnabled && group.kickRules.spam.enabled) || (group.imageGuardEnabled && group.imageSettings.deleteMessage && group.kickRules.image.enabled)) ? <Badge tone="warning">Kick</Badge> : null}
     </span>
   );
 }

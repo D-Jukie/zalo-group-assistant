@@ -5,8 +5,8 @@ import { cn, formatDay, formatNumber } from "@/lib/format";
 import { ruleLabels, totalViolations, violationRules, type DailyViolations, type ViolationRule } from "@/lib/types";
 import { Button, EmptyState } from "./ui";
 
-// Series colours follow the rule, never its position: link is always series 1, banned words series 2, spam series 3.
-const seriesColor: Record<ViolationRule, string> = { link: "bg-series-1", badWord: "bg-series-2", spam: "bg-series-3" };
+// Series colours follow the rule, never its position: link is always series 1, banned words series 2, spam series 3, sensitive images series 4.
+const seriesColor: Record<ViolationRule, string> = { link: "bg-series-1", badWord: "bg-series-2", spam: "bg-series-3", image: "bg-series-4" };
 const plotHeight = 208;
 
 // Rounds the axis top up to a clean number so the ticks read 0 / 5 / 10 rather than 0 / 3.5 / 7.

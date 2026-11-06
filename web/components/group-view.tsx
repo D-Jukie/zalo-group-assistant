@@ -7,7 +7,7 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import useSWR, { useSWRConfig } from "swr";
 import { ApiError, errorText, send } from "@/lib/api";
 import { cn, formatDateTime, formatNumber, splitWindow, windowUnits } from "@/lib/format";
-import { groupRoleNames, ruleLabels, totalViolations, violationRules, type Group, type GroupToggle, type KickRule, type MemberViolations, type RateRule, type SpamSettings, type AutoReplyRule, type PendingJoinList, type ViolationMessage, type ViolationRule } from "@/lib/types";
+import { groupRoleNames, imageThresholdRange, ruleLabels, totalViolations, violationRules, type Group, type ImageGuardSettings, type ImageGuardStatus, type GroupToggle, type KickRule, type MemberViolations, type RateRule, type SpamSettings, type AutoReplyRule, type PendingJoinList, type ViolationMessage, type ViolationRule } from "@/lib/types";
 import { AutoReplyManager } from "./auto-replies-view";
 import { ConfirmDialog } from "./confirm-dialog";
 import { JoinApprovalCard, PendingMembers } from "./group-approvals";
@@ -22,7 +22,7 @@ import { useToast } from "./toast";
 import { Badge, Button, Card, CardHeader, CompactSwitch, EmptyState, Input, Skeleton, StatTile, Switch } from "./ui";
 import { ViolationItem } from "./violation-item";
 
-const toggleNames: Record<GroupToggle, string> = { bot: "bot ở nhóm này", links: "chặn link", "bad-words": "lọc từ cấm", spam: "chống spam" };
+const toggleNames: Record<GroupToggle, string> = { bot: "bot ở nhóm này", links: "chặn link", "bad-words": "lọc từ cấm", spam: "chống spam", images: "chặn ảnh nhạy cảm" };
 
 // Saves one of the group's switches, hands back the updated group and says what happened.
 function useToggle(group: Group, onChange: (group: Group) => void) {
@@ -53,7 +53,8 @@ function BotSwitch({ group, onChange }: { group: Group; onChange: (group: Group)
 }
 
 // Kicking for one feature: a switch, plus the count and time window that apply while it is on.
-function KickSetting({ group, rule, featureOn, onSaved }: { group: Group; rule: ViolationRule; featureOn: boolean; onSaved: (group: Group) => void }) {
+// blockedReason, when given, keeps kicking off and says why.
+function KickSetting({ group, rule, featureOn, blockedReason, onSaved }: { group: Group; rule: ViolationRule; featureOn: boolean; blockedReason?: string; onSaved: (group: Group) => void }) {
   const kickRule = group.kickRules[rule];
   const initial = splitWindow(kickRule.windowSeconds);
   const [count, setCount] = useState(String(kickRule.count));
@@ -61,7 +62,7 @@ function KickSetting({ group, rule, featureOn, onSaved }: { group: Group; rule: 
   const [unitSeconds, setUnitSeconds] = useState(initial.unitSeconds);
   const [pending, setPending] = useState(false);
   const toast = useToast();
-  const active = kickRule.enabled && group.botIsAdmin;
+  const active = kickRule.enabled && group.botIsAdmin && blockedReason === undefined;
   const dirty = count !== String(kickRule.count) || Number(amount) * unitSeconds !== kickRule.windowSeconds;
   const fieldId = `kick-${rule}`;
 
@@ -86,10 +87,10 @@ function KickSetting({ group, rule, featureOn, onSaved }: { group: Group; rule: 
     <div>
       <Switch
         checked={active}
-        disabled={!group.botIsAdmin || !featureOn}
+        disabled={!group.botIsAdmin || !featureOn || blockedReason !== undefined}
         onChange={(enabled) => save({ enabled, count: kickRule.count, windowSeconds: kickRule.windowSeconds })}
         label="Kick khi vi phạm nhiều lần"
-        description={!group.botIsAdmin ? "Chỉ bật được khi bot là trưởng hoặc phó nhóm." : !featureOn ? "Bật tính năng này trước." : active ? "Chỉ tính vi phạm của riêng tính năng này, trong khoảng thời gian bên dưới." : "Đang tắt: vi phạm chỉ bị xóa tin và ghi nhận."}
+        description={!group.botIsAdmin ? "Chỉ bật được khi bot là trưởng hoặc phó nhóm." : blockedReason !== undefined ? blockedReason : !featureOn ? "Bật tính năng này trước." : active ? "Chỉ tính vi phạm của riêng tính năng này, trong khoảng thời gian bên dưới." : "Đang tắt: vi phạm chỉ bị xóa tin và ghi nhận."}
       />
       {active && featureOn ? (
         <form onSubmit={saveNumbers} className="pb-3">
@@ -183,16 +184,75 @@ function SpamSettingsForm({ group, onSaved }: { group: Group; onSaved: (group: G
   );
 }
 
+// The sensitive-image guard's own settings for this group: how sure the model must be, and whether
+// the bot deletes such a photo or only records it. Nothing is saved until the form is submitted.
+function ImageSettingsForm({ group, onSaved }: { group: Group; onSaved: (group: Group) => void }) {
+  const saved = group.imageSettings;
+  const [threshold, setThreshold] = useState(String(saved.threshold));
+  const [deleteMessage, setDeleteMessage] = useState(saved.deleteMessage);
+  const [pending, setPending] = useState(false);
+  const toast = useToast();
+  const { data: model } = useSWR<ImageGuardStatus>("/image-guard");
+  const dirty = threshold !== String(saved.threshold) || deleteMessage !== saved.deleteMessage;
+
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setPending(true);
+    try {
+      const settings: ImageGuardSettings = { threshold: Number(threshold), deleteMessage };
+      onSaved(await send<Group>("PATCH", `/groups/${encodeURIComponent(group.groupId)}/image-settings`, settings));
+      toast.success("Đã lưu cài đặt chặn ảnh");
+    } catch (exception) {
+      toast.error(errorText(exception));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <form onSubmit={save} className="py-3">
+      {model !== undefined && model.state !== "ready" ? (
+        <p role="status" className="mb-3 rounded-md border border-warning/30 bg-warning-surface px-3 py-2 text-sm text-warning">
+          {model.state === "missing" ? <>Bot chưa có mô hình nhận diện ảnh nên chưa kiểm tra ảnh nào. Chạy <code className="font-mono" translate="no">npm run model</code> trong thư mục bot rồi khởi động lại bot.</> : <>Bot không nạp được mô hình nhận diện ảnh: {model.error ?? "lỗi không rõ"}.</>}
+        </p>
+      ) : null}
+      <fieldset disabled={!group.imageGuardEnabled} className="space-y-3 text-sm disabled:opacity-60">
+        <legend className="mb-3 text-sm font-medium">Bị tính là ảnh nhạy cảm khi</legend>
+        <div className="flex flex-wrap items-center gap-2">
+          <label htmlFor="image-threshold">Điểm của mô hình từ</label>
+          <Input id="image-threshold" name="threshold" type="number" inputMode="numeric" autoComplete="off" min={imageThresholdRange.min} max={imageThresholdRange.max} required value={threshold} onChange={(event) => setThreshold(event.target.value)} className="max-w-20 tabular-nums" />
+          <span>%</span>
+        </div>
+        <p className="text-muted">Ngưỡng cao thì ít bắt nhầm ảnh bình thường nhưng dễ bỏ sót hơn. Mặc định 85%.</p>
+        <div role="radiogroup" aria-label="Khi có ảnh vi phạm" className="space-y-2">
+          <label className="flex cursor-pointer items-start gap-2">
+            <input type="radio" name="image-action" checked={!deleteMessage} onChange={() => setDeleteMessage(false)} className="mt-0.5 size-4 accent-[var(--accent)]" />
+            <span><span className="font-medium">Chỉ ghi nhận</span><span className="block text-muted">Ảnh vẫn ở trong nhóm. Dùng để thử xem mô hình có bắt nhầm không.</span></span>
+          </label>
+          <label className="flex cursor-pointer items-start gap-2">
+            <input type="radio" name="image-action" checked={deleteMessage} onChange={() => setDeleteMessage(true)} className="mt-0.5 size-4 accent-[var(--accent)]" />
+            <span><span className="font-medium">Xóa ảnh</span><span className="block text-muted">Cần bot là trưởng hoặc phó nhóm.</span></span>
+          </label>
+        </div>
+        {dirty ? <Button type="submit" variant="primary" pending={pending}>Lưu cài đặt chặn ảnh</Button> : null}
+      </fieldset>
+    </form>
+  );
+}
+
 // One feature of the bot in this group, as a card as wide as the page: its on/off switch in the
 // header and, underneath, two columns that always fill the card: what the feature looks for on the
 // left, what happens to a member who keeps breaking it on the right.
-function FeatureCard({ group, rule, toggleName, enabled, title, description, onChange, children }: {
+function FeatureCard({ group, rule, toggleName, enabled, title, description, outcome, kickBlockedReason, onChange, children }: {
   group: Group;
   rule: ViolationRule;
   toggleName: GroupToggle;
   enabled: boolean;
   title: string;
   description: string;
+  // What happens to a violation, when it is not the usual deletion.
+  outcome?: string;
+  kickBlockedReason?: string;
   onChange: (group: Group) => void;
   // What the feature looks for: its own list or settings.
   children: ReactNode;
@@ -215,13 +275,14 @@ function FeatureCard({ group, rule, toggleName, enabled, title, description, onC
         <div className="min-w-0">{children}</div>
         <div className="min-w-0 px-5 py-1">
           <p className="pt-3 text-sm font-medium">Khi có vi phạm</p>
-          <p className="mt-1 text-sm text-muted">{group.botIsAdmin ? "Tin vi phạm bị xóa và được ghi vào thống kê." : "Bot là thành viên thường, không phải trưởng hay phó nhóm, nên chỉ ghi nhận vi phạm, không xóa được tin."}</p>
+          <p className="mt-1 text-sm text-muted">{outcome !== undefined ? outcome : group.botIsAdmin ? "Tin vi phạm bị xóa và được ghi vào thống kê." : "Bot là thành viên thường, không phải trưởng hay phó nhóm, nên chỉ ghi nhận vi phạm, không xóa được tin."}</p>
           <KickSetting
             // Saved numbers remount the form so its fields show the stored values again.
             key={`${kickRule.enabled}-${kickRule.count}-${kickRule.windowSeconds}`}
             group={group}
             rule={rule}
             featureOn={enabled}
+            blockedReason={kickBlockedReason}
             onSaved={onChange}
           />
         </div>
@@ -230,7 +291,7 @@ function FeatureCard({ group, rule, toggleName, enabled, title, description, onC
   );
 }
 
-// The three features, one under the other. Each carries the list or settings that belong to it,
+// The features, one under the other. Each carries the list or settings that belong to it,
 // so nothing about a feature has to be looked for elsewhere on the page.
 function FeatureCards({ group, onChange }: { group: Group; onChange: (group: Group) => void }) {
   const base = `/groups/${encodeURIComponent(group.groupId)}`;
@@ -293,6 +354,22 @@ function FeatureCards({ group, onChange }: { group: Group; onChange: (group: Gro
         <div className="px-5 py-1">
           {/* Saved settings remount the form so its fields show the stored values again. */}
           <SpamSettingsForm key={JSON.stringify(group.spamSettings)} group={group} onSaved={onChange} />
+        </div>
+      </FeatureCard>
+      <FeatureCard
+        group={group}
+        rule="image"
+        toggleName="images"
+        enabled={group.imageGuardEnabled}
+        title="Chặn ảnh nhạy cảm"
+        description="Bot cho từng ảnh thành viên gửi qua một mô hình nhận diện chạy ngay trên máy của bot. Ảnh có điểm từ ngưỡng trở lên bị tính là vi phạm."
+        outcome={!group.imageSettings.deleteMessage ? "Đang ở chế độ chỉ ghi nhận: ảnh vi phạm được ghi vào thống kê, không bị xóa." : group.botIsAdmin ? "Ảnh vi phạm bị xóa và được ghi vào thống kê." : undefined}
+        kickBlockedReason={group.imageSettings.deleteMessage ? undefined : "Ảnh chỉ được ghi nhận thì không tính để kick. Chọn xóa ảnh trước."}
+        onChange={onChange}
+      >
+        <div className="px-5 py-1">
+          {/* Saved settings remount the form so its fields show the stored values again. */}
+          <ImageSettingsForm key={JSON.stringify(group.imageSettings)} group={group} onSaved={onChange} />
         </div>
       </FeatureCard>
       {/* Saved criteria remount the card so its fields show the stored values again. */}

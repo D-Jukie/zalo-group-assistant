@@ -1,10 +1,10 @@
 // Shapes of the bot API's JSON. Kept in step with src/types.ts in the bot.
 
-export type ViolationRule = "link" | "badWord" | "spam";
+export type ViolationRule = "link" | "badWord" | "spam" | "image";
 
-export const violationRules: readonly ViolationRule[] = ["link", "badWord", "spam"];
+export const violationRules: readonly ViolationRule[] = ["link", "badWord", "spam", "image"];
 
-export const ruleLabels: Record<ViolationRule, string> = { link: "Link", badWord: "Từ cấm", spam: "Spam" };
+export const ruleLabels: Record<ViolationRule, string> = { link: "Link", badWord: "Từ cấm", spam: "Spam", image: "Ảnh nhạy cảm" };
 
 export function totalViolations(counts: Record<ViolationRule, number>): number {
   return violationRules.reduce((sum, rule) => sum + counts[rule], 0);
@@ -15,6 +15,15 @@ export type RateRule = { enabled: boolean; count: number; windowSeconds: number 
 
 // What the spam guard looks for in a group: bursts of messages, repeated text, contact details.
 export type SpamSettings = { flood: RateRule; repeat: RateRule; contact: { enabled: boolean } };
+
+// What the sensitive-image guard does in a group: a photo the image model scores at `threshold` (50 to 99,
+// how sure it is in percent) or above is recorded, and deleted too when `deleteMessage` is on.
+export type ImageGuardSettings = { threshold: number; deleteMessage: boolean };
+
+export const imageThresholdRange = { min: 50, max: 99 } as const;
+
+// Whether the bot has its image model: "missing" until `npm run model` fetched it, "failed" when it could not load it.
+export type ImageGuardStatus = { state: "ready" | "missing" | "failed"; error?: string };
 
 // Kicking belongs to a feature: each rule has its own switch, count and time window.
 export type KickRule = RateRule;
@@ -62,7 +71,9 @@ export type Group = {
   linkGuardEnabled: boolean;
   badWordFilterEnabled: boolean;
   spamGuardEnabled: boolean;
+  imageGuardEnabled: boolean;
   spamSettings: SpamSettings;
+  imageSettings: ImageGuardSettings;
   joinApproval: JoinApprovalSettings;
   commands: GroupCommandSettings;
   welcome: GroupWelcomeSettings;
@@ -86,10 +97,11 @@ export type GroupSummary = {
   linkGuard: number;
   badWordFilter: number;
   spamGuard: number;
+  imageGuard: number;
   kicking: number;
 };
 
-export type GroupToggle = "bot" | "links" | "bad-words" | "spam";
+export type GroupToggle = "bot" | "links" | "bad-words" | "spam" | "images";
 
 export type BotStatus = {
   userId: string;
